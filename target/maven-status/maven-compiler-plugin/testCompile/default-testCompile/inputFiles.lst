@@ -1,0 +1,16 @@
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/ActiveSessionTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/PointerPolicyTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/display/SessionBackendsTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/AdoptedSessionLiveTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/AdoptedSessionTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/HostSessionTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/NestedSessionGamescopeLiveTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/NestedSessionLiveTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/NestedSessionSoakTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/NestedSessionTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/SessionHostWindowLiveTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/impl/SessionHostWindowTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/process/AppOutputLogTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/process/SessionBusTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/process/SessionMembersTest.java
+/home/benjamingroisne/IdeaProjects/botmaker/botmaker-session/src/test/java/com/botmaker/session/process/SessionReaperSweepTest.java

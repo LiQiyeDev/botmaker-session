@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.botmaker.session.process.SessionMembersTest
+-------------------------------------------------------------------------------
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.135 s -- in com.botmaker.session.process.SessionMembersTest
