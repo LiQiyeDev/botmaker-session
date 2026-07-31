@@ -16,6 +16,40 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-01 — refactor Phase 4: B8, the reaper's own failure mode (SS6)
+
+This module's single Phase 4 unit. **80 → 82 tests**, and the first production change here since the
+extraction.
+
+### Done
+
+- **B8 — `launch()` and `reap()` are now atomic against each other.** The guard, the `launched` list and the
+  `reaped` flag move under one lock, and `launch` **re-tests the flag after `pb.start()`**: a launch that loses
+  the race destroys its own child (and stops its transient scope under systemd) instead of returning a healthy
+  process into a list the teardown has already drained. `launched` is a plain `ArrayList` guarded by the lock
+  rather than a `CopyOnWriteArrayList` — a thread-safe *container* was never the missing piece; a point in time
+  where the flag and the list agree was.
+- **The lock is never held across a spawn or a kill.** `reap()` flips the flag and copy-and-clears the list
+  under it, then does `systemctl --user stop` (seconds) and the kill loop outside. A launcher racing a reap
+  therefore blocks for a few instructions, not for the teardown.
+- **A strategy seam: `SessionReaper(String, boolean)`, package-private.** `systemdAvailable` is a cached static
+  probe with no injection point, so the **fallback** path — where the `launched` list *is* the entire teardown,
+  and the only configuration B8 actually bites in — was unreachable from any test on a systemd box. The fix
+  would otherwise have shipped unverified.
+- **`SessionReaperRaceTest` 3 → 5 tests, and the gate moved.** The fallback race is B8's gate
+  (**40 of 40 launches leaked** with the lock reverted and the seam kept); the systemd race stays as a
+  regression sampler and is explicitly *not* the gate — it was green before the fix too. Added the first
+  coverage the fallback teardown has ever had: `reap()` kills a tracked process **and its descendants**.
+
+### The finding worth keeping
+
+The fix is one lock; the *verification* needed a seam. A bug whose severity is conditional on a configuration
+the machine cannot produce is unverifiable until that configuration is injectable — and "unverifiable" is how a
+fix that is obviously right ships subtly wrong. The measured numbers make the point: the same race is
+0-in-240 under systemd and 40-in-40 under the fallback.
+
+---
+
 ## 2026-07-31 — refactor Phase 3: the test floor (SS3, SS4)
 
 Part of the repo-wide refactor scheduled in `../docs/refactor/02-execution-order.md`; this module's share is

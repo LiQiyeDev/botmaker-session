@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -49,15 +48,34 @@ public final class SessionReaper {
     private final String id;
     private final String slice;
     private final boolean useSystemd;
-    private final List<Process> launched = new CopyOnWriteArrayList<>();
+    /**
+     * Guards {@link #reaped} together with {@link #launched}. The pair must move as one: a launch that passes the
+     * guard, starts its process and only <em>then</em> records it can have the teardown run in between, leaving a
+     * live process no slice will stop and no handle will kill — B8, and the exact failure this class exists to
+     * prevent. Held only across the flag/list transitions, never across {@link ProcessBuilder#start()} or a kill.
+     */
+    private final Object lock = new Object();
+    /** Guarded by {@link #lock}. */
+    private final List<Process> launched = new ArrayList<>();
     /** The roles actually launched, so {@link #unitNamesExcept} names units that exist rather than a fixed list. */
     private final Set<String> roles = ConcurrentHashMap.newKeySet();
-    private volatile boolean reaped;
+    /** Guarded by {@link #lock} for writes; read unguarded only for diagnostics. */
+    private boolean reaped;
 
     public SessionReaper(String sessionId) {
+        this(sessionId, systemdAvailable());
+    }
+
+    /**
+     * The strategy seam, for tests. {@link #systemdAvailable()} is a cached static probe with no injection point,
+     * so on a systemd machine the <b>fallback</b> path — the one where the {@link #launched} list is the entire
+     * teardown, and therefore the one B8 actually bites in — is otherwise unreachable and untested. Production
+     * code uses {@link #SessionReaper(String)} and lets the probe decide.
+     */
+    SessionReaper(String sessionId, boolean useSystemd) {
         this.id = sanitize(sessionId);
         this.slice = "botmaker-sess-" + id + ".slice";
-        this.useSystemd = systemdAvailable();
+        this.useSystemd = useSystemd;
         Diag.log("[Session] reaper for " + id + ": " + (useSystemd ? "systemd scope/slice " + slice
             : "process-tree (no user systemd)"));
     }
@@ -85,6 +103,10 @@ public final class SessionReaper {
      * session's reap group, sending its stdout to {@code stdout}. {@code role} names the transient unit for
      * diagnosability (e.g. {@code "xephyr"}, {@code "wm"}, {@code "app"}).
      *
+     * <p>Refused with {@link IllegalStateException} once {@link #reap()} has run — <em>including</em> when the reap
+     * lands while this call is inside {@link ProcessBuilder#start()}: the just-started process is destroyed before
+     * the exception is thrown, because losing that race must kill the child, not merely decline to track it.
+     *
      * @return the launched {@link Process} — the {@code systemd-run --scope} wrapper under the systemd
      *         strategy (whose lifetime tracks the payload's), or the payload itself under the fallback.
      */
@@ -100,8 +122,10 @@ public final class SessionReaper {
      */
     public Process launch(String role, List<String> command, Map<String, String> env, Redirect stdout, Redirect stderr)
             throws IOException {
-        if (reaped) {
-            throw new IllegalStateException("SessionReaper " + id + " already reaped");
+        synchronized (lock) {
+            if (reaped) {
+                throw new IllegalStateException("SessionReaper " + id + " already reaped");
+            }
         }
         roles.add(role);
         List<String> full = new ArrayList<>();
@@ -128,9 +152,23 @@ public final class SessionReaper {
         pb.redirectOutput(stdout != null ? stdout : Redirect.DISCARD);
         pb.redirectError(stderr != null ? stderr : Redirect.DISCARD);
         Diag.log("[Session] " + id + "/" + role + ": " + String.join(" ", useSystemd ? full : command));
+        // Deliberately not under the lock: a spawn can block, and reap() must never wait behind one.
         Process p = pb.start();
-        launched.add(p);
-        return p;
+        synchronized (lock) {
+            if (!reaped) {
+                launched.add(p);
+                return p;
+            }
+        }
+        // The reap landed while we were starting. The process exists and nothing tracks it, so this call — not
+        // the teardown that already returned — is the only thing that can still kill it.
+        Diag.error("[Session] " + id + "/" + role + ": reaped mid-launch; destroying pid " + p.pid());
+        destroyTree(p);
+        if (useSystemd) {
+            // The scope joined the slice after the stop, so the slice teardown missed it.
+            stopUnit("botmaker-sess-" + id + "-" + role + ".scope");
+        }
+        throw new IllegalStateException("SessionReaper " + id + " already reaped");
     }
 
     /**
@@ -139,10 +177,18 @@ public final class SessionReaper {
      * every launched process together with its descendants.
      */
     public void reap() {
-        if (reaped) {
-            return;
+        List<Process> toKill;
+        synchronized (lock) {
+            if (reaped) {
+                return;
+            }
+            reaped = true;
+            toKill = List.copyOf(launched);
+            launched.clear();
         }
-        reaped = true;
+        // Outside the lock: the flag is already set, so a launch racing us will refuse (or destroy its own child)
+        // rather than be tracked — and holding the lock across a multi-second `systemctl stop` would stall it for
+        // no gain.
         if (useSystemd) {
             stopUnit(slice);
             Diag.log("[Session] " + id + ": stopped slice " + slice);
@@ -150,15 +196,17 @@ public final class SessionReaper {
         }
         // Belt and suspenders (and the whole story under the fallback): force-kill each tracked process and its
         // descendants. Under systemd the scope wrappers and payloads are already gone; this is a cheap no-op then.
-        for (Process p : launched) {
-            try {
-                p.descendants().forEach(ProcessHandle::destroyForcibly);
-                p.destroyForcibly();
-            } catch (Exception e) {
-                Diag.error("[Session] " + id + ": killing a process failed: " + e.getMessage());
-            }
+        toKill.forEach(this::destroyTree);
+    }
+
+    /** Force-destroy {@code p} together with its descendants; best-effort, like every other teardown step. */
+    private void destroyTree(Process p) {
+        try {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        } catch (Exception e) {
+            Diag.error("[Session] " + id + ": killing a process failed: " + e.getMessage());
         }
-        launched.clear();
     }
 
     /**
