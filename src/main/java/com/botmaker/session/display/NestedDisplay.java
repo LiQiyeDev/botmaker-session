@@ -27,122 +27,122 @@ import java.util.Map;
  */
 public final class NestedDisplay implements SessionDisplay {
 
-	/** How long to wait for Xephyr to write its display number, then for that display to accept a connection. */
-	private static final long START_TIMEOUT_MS = 10_000;
-	private static final long POLL_MS = 100;
+    /** How long to wait for Xephyr to write its display number, then for that display to accept a connection. */
+    private static final long START_TIMEOUT_MS = 10_000;
+    private static final long POLL_MS = 100;
 
-	private final String displayName;
-	private final int width;
-	private final int height;
-	private final Process server;
+    private final String displayName;
+    private final int width;
+    private final int height;
+    private final Process server;
 
-	private NestedDisplay(String displayName, int width, int height, Process server) {
-		this.displayName = displayName;
-		this.width = width;
-		this.height = height;
-		this.server = server;
-	}
+    private NestedDisplay(String displayName, int width, int height, Process server) {
+        this.displayName = displayName;
+        this.width = width;
+        this.height = height;
+        this.server = server;
+    }
 
-	/** The display this server owns, e.g. {@code ":9"}. */
-	@Override
-	public String displayName() {
-		return displayName;
-	}
+    /** The display this server owns, e.g. {@code ":9"}. */
+    @Override
+    public String displayName() {
+        return displayName;
+    }
 
-	@Override
-	public int width() {
-		return width;
-	}
+    @Override
+    public int width() {
+        return width;
+    }
 
-	@Override
-	public int height() {
-		return height;
-	}
+    @Override
+    public int height() {
+        return height;
+    }
 
-	/** Whether the X server process is still running — the signal a session's {@code DEAD} health rests on. */
-	@Override
-	public boolean alive() {
-		return server.isAlive();
-	}
+    /** Whether the X server process is still running — the signal a session's {@code DEAD} health rests on. */
+    @Override
+    public boolean alive() {
+        return server.isAlive();
+    }
 
-	@Override
-	public long serverPid() {
-		return server.pid();
-	}
+    @Override
+    public long serverPid() {
+        return server.pid();
+    }
 
-	@Override
-	public boolean hardwareAccelerated() {
-		return false; // Xephyr here is glamor-over-whatever-the-host-has; treated as the 2D backend.
-	}
+    @Override
+    public boolean hardwareAccelerated() {
+        return false; // Xephyr here is glamor-over-whatever-the-host-has; treated as the 2D backend.
+    }
 
-	/**
-	 * Launch Xephyr at {@code width}x{@code height} through {@code reaper}, read back the display number it
-	 * chose, and block until that display accepts a connection.
-	 *
-	 * @throws SessionStartException if Xephyr never reports a number, or the display never becomes connectable
-	 */
-	public static NestedDisplay startXephyr(SessionReaper reaper, int width, int height) throws SessionStartException {
-		File out;
-		Process server;
-		try {
-			out = SessionReaper.tempOutputFile("botmaker-xephyr-");
-			// -displayfd 1: Xephyr picks a free display and writes "<n>\n" to fd 1. -ac drops access control
-			// (a private local display), -noreset keeps it alive across the last client, -resizeable lets the
-			// game size the root. No ":N" is passed — the whole point is that Xephyr, not us, allocates it.
-			server = reaper.launch("xephyr",
-				List.of("Xephyr", "-displayfd", "1", "-screen", width + "x" + height,
-					"-ac", "-noreset", "-resizeable"),
-				Map.of(),
-				Redirect.appendTo(out));
-		} catch (Exception e) {
-			throw new SessionStartException("could not launch Xephyr (is it installed?): " + e.getMessage(), e);
-		}
+    /**
+     * Launch Xephyr at {@code width}x{@code height} through {@code reaper}, read back the display number it
+     * chose, and block until that display accepts a connection.
+     *
+     * @throws SessionStartException if Xephyr never reports a number, or the display never becomes connectable
+     */
+    public static NestedDisplay startXephyr(SessionReaper reaper, int width, int height) throws SessionStartException {
+        File out;
+        Process server;
+        try {
+            out = SessionReaper.tempOutputFile("botmaker-xephyr-");
+            // -displayfd 1: Xephyr picks a free display and writes "<n>\n" to fd 1. -ac drops access control
+            // (a private local display), -noreset keeps it alive across the last client, -resizeable lets the
+            // game size the root. No ":N" is passed — the whole point is that Xephyr, not us, allocates it.
+            server = reaper.launch("xephyr",
+                List.of("Xephyr", "-displayfd", "1", "-screen", width + "x" + height,
+                    "-ac", "-noreset", "-resizeable"),
+                Map.of(),
+                Redirect.appendTo(out));
+        } catch (Exception e) {
+            throw new SessionStartException("could not launch Xephyr (is it installed?): " + e.getMessage(), e);
+        }
 
-		String number = awaitDisplayNumber(out, server);
-		String display = ":" + number;
-		DisplayReadiness.awaitConnectable(display, server, START_TIMEOUT_MS);
-		Diag.log("[Session] nested display " + display + " up (" + width + "x" + height + ")");
-		return new NestedDisplay(display, width, height, server);
-	}
+        String number = awaitDisplayNumber(out, server);
+        String display = ":" + number;
+        DisplayReadiness.awaitConnectable(display, server, START_TIMEOUT_MS);
+        Diag.log("[Session] nested display " + display + " up (" + width + "x" + height + ")");
+        return new NestedDisplay(display, width, height, server);
+    }
 
-	/** Poll the server's stdout file until it holds the display number Xephyr wrote, or time out / it dies. */
-	private static String awaitDisplayNumber(File out, Process server) throws SessionStartException {
-		long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
-		while (System.currentTimeMillis() < deadline) {
-			String n = readNumber(out);
-			if (n != null) {
-				return n;
-			}
-			if (!server.isAlive()) {
-				throw new SessionStartException("Xephyr exited before reporting a display number "
-					+ "(exit " + server.exitValue() + ")");
-			}
-			sleep();
-		}
-		throw new SessionStartException("Xephyr did not report a display number within "
-			+ START_TIMEOUT_MS + "ms");
-	}
+    /** Poll the server's stdout file until it holds the display number Xephyr wrote, or time out / it dies. */
+    private static String awaitDisplayNumber(File out, Process server) throws SessionStartException {
+        long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            String n = readNumber(out);
+            if (n != null) {
+                return n;
+            }
+            if (!server.isAlive()) {
+                throw new SessionStartException("Xephyr exited before reporting a display number "
+                    + "(exit " + server.exitValue() + ")");
+            }
+            sleep();
+        }
+        throw new SessionStartException("Xephyr did not report a display number within "
+            + START_TIMEOUT_MS + "ms");
+    }
 
-	/** The first whitespace-delimited integer token in the file, or {@code null} if none is there yet. */
-	private static String readNumber(File out) {
-		try {
-			String s = new String(Files.readAllBytes(out.toPath()), StandardCharsets.US_ASCII).trim();
-			if (s.isEmpty()) {
-				return null;
-			}
-			String first = s.split("\\s+")[0];
-			// Guard against a partial write: only accept an all-digit token.
-			return first.chars().allMatch(Character::isDigit) ? first : null;
-		} catch (Exception e) {
-			return null;
-		}
-	}
+    /** The first whitespace-delimited integer token in the file, or {@code null} if none is there yet. */
+    private static String readNumber(File out) {
+        try {
+            String s = new String(Files.readAllBytes(out.toPath()), StandardCharsets.US_ASCII).trim();
+            if (s.isEmpty()) {
+                return null;
+            }
+            String first = s.split("\\s+")[0];
+            // Guard against a partial write: only accept an all-digit token.
+            return first.chars().allMatch(Character::isDigit) ? first : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
-	private static void sleep() {
-		try {
-			Thread.sleep(POLL_MS);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-		}
-	}
+    private static void sleep() {
+        try {
+            Thread.sleep(POLL_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }

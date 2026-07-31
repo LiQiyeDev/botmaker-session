@@ -15,38 +15,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AdoptedSessionTest {
 
-	@Test
-	void nothingToAdoptIsNullRatherThanAnException() {
-		// The caller's fallback is its own launch, so a missing offer has to be cheap and quiet — and must not even
-		// touch X11 (this runs on a box with no display at all).
-		assertNull(AdoptedSession.adopt(null, null, NestedSession.Backend.GAMESCOPE));
-		assertNull(AdoptedSession.adopt("  ", "123", NestedSession.Backend.GAMESCOPE));
-	}
+    @Test
+    void nothingToAdoptIsNullRatherThanAnException() {
+        // The caller's fallback is its own launch, so a missing offer has to be cheap and quiet — and must not even
+        // touch X11 (this runs on a box with no display at all).
+        assertNull(AdoptedSession.adopt(null, null, NestedSession.Backend.GAMESCOPE));
+        assertNull(AdoptedSession.adopt("  ", "123", NestedSession.Backend.GAMESCOPE));
+    }
 
-	@Test
-	void aNullSessionOffersNothing() {
-		// So a spawn site can compose the arguments unconditionally instead of branching around them.
-		assertEquals(List.of(), AdoptedSession.handoffArguments(null));
-	}
+    @Test
+    void aNullSessionOffersNothing() {
+        // So a spawn site can compose the arguments unconditionally instead of branching around them.
+        assertEquals(List.of(), AdoptedSession.handoffArguments(null));
+    }
 
-	@Test
-	void theHandoffPropertiesAreTheOnesTheReaderReads() {
-		// Named constants rather than literals at either end: a rename that touched only the writer would silently
-		// stop every bot adopting anything, with no error anywhere.
-		assertEquals("botmaker.session.display", AdoptedSession.DISPLAY_PROPERTY);
-		assertEquals("botmaker.session.window", AdoptedSession.WINDOW_PROPERTY);
-		assertTrue(AdoptedSession.BACKEND_PROPERTY.startsWith("botmaker.session."));
-	}
+    @Test
+    void theHandoffPropertiesAreTheOnesTheReaderReads() {
+        // Named constants rather than literals at either end: a rename that touched only the writer would silently
+        // stop every bot adopting anything, with no error anywhere.
+        assertEquals("botmaker.session.display", AdoptedSession.DISPLAY_PROPERTY);
+        assertEquals("botmaker.session.window", AdoptedSession.WINDOW_PROPERTY);
+        assertTrue(AdoptedSession.BACKEND_PROPERTY.startsWith("botmaker.session."));
+    }
 
-	@Test
-	void aWindowIdParsesFromDecimalOrHexAndNeverThrows() {
-		assertEquals(1234L, AdoptedSession.parseWindowId("1234"));
-		assertEquals(0x1a00003L, AdoptedSession.parseWindowId("0x1a00003"));
-		assertEquals(0x1a00003L, AdoptedSession.parseWindowId("0X1A00003"));
-		// 0 is the value no window has, so it doubles as "not a window id" — the attach then falls back to the
-		// newest top-level, which is what an absent hand-off should do.
-		assertEquals(0L, AdoptedSession.parseWindowId(null));
-		assertEquals(0L, AdoptedSession.parseWindowId(""));
-		assertEquals(0L, AdoptedSession.parseWindowId("not-a-window"));
-	}
+    @Test
+    void aWindowIdParsesFromDecimalOrHexAndNeverThrows() {
+        assertEquals(1234L, AdoptedSession.parseWindowId("1234"));
+        assertEquals(0x1a00003L, AdoptedSession.parseWindowId("0x1a00003"));
+        assertEquals(0x1a00003L, AdoptedSession.parseWindowId("0X1A00003"));
+        // 0 is the value no window has, so it doubles as "not a window id" — the attach then falls back to the
+        // newest top-level, which is what an absent hand-off should do.
+        assertEquals(0L, AdoptedSession.parseWindowId(null));
+        assertEquals(0L, AdoptedSession.parseWindowId(""));
+        assertEquals(0L, AdoptedSession.parseWindowId("not-a-window"));
+    }
 }

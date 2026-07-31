@@ -25,25 +25,25 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 @DisabledOnOs(OS.WINDOWS)
 class SessionHostWindowTest {
 
-	@Test
-	void aProcessThatOwnsNoHostWindowIsNullRatherThanAnException() throws Exception {
-		Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
-		try {
-			assertNull(SessionHostWindow.find(sleeper.pid(), "definitely-not-a-display-server", 200));
-		} finally {
-			sleeper.destroyForcibly();
-		}
-	}
+    @Test
+    void aProcessThatOwnsNoHostWindowIsNullRatherThanAnException() throws Exception {
+        Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
+        try {
+            assertNull(SessionHostWindow.find(sleeper.pid(), "definitely-not-a-display-server", 200));
+        } finally {
+            sleeper.destroyForcibly();
+        }
+    }
 
-	@Test
-	void aNameHintIsOptional() throws Exception {
-		// The name is only the fallback match, so a backend that reports nothing usable must still get an answer
-		// instead of a NullPointerException out of the string compare.
-		Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
-		try {
-			assertNull(SessionHostWindow.find(sleeper.pid(), null, 200));
-		} finally {
-			sleeper.destroyForcibly();
-		}
-	}
+    @Test
+    void aNameHintIsOptional() throws Exception {
+        // The name is only the fallback match, so a backend that reports nothing usable must still get an answer
+        // instead of a NullPointerException out of the string compare.
+        Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
+        try {
+            assertNull(SessionHostWindow.find(sleeper.pid(), null, 200));
+        } finally {
+            sleeper.destroyForcibly();
+        }
+    }
 }

@@ -7,12 +7,12 @@ package com.botmaker.session;
  */
 public interface SessionKeyboard {
 
-	/** Press a key by its native code. */
-	void keyDown(int nativeKeyCode);
+    /** Press a key by its native code. */
+    void keyDown(int nativeKeyCode);
 
-	/** Release a key by its native code. */
-	void keyUp(int nativeKeyCode);
+    /** Release a key by its native code. */
+    void keyUp(int nativeKeyCode);
 
-	/** Type a string, pressing/releasing each character (Shift held for uppercase). */
-	void type(String text);
+    /** Type a string, pressing/releasing each character (Shift held for uppercase). */
+    void type(String text);
 }

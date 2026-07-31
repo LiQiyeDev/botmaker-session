@@ -11,39 +11,39 @@ package com.botmaker.session;
  */
 public enum Capability {
 
-	/** Pointer can be moved to an absolute screen coordinate ({@link SessionPointer#moveAbsolute}). */
-	ABSOLUTE_POINTER,
+    /** Pointer can be moved to an absolute screen coordinate ({@link SessionPointer#moveAbsolute}). */
+    ABSOLUTE_POINTER,
 
-	/** Pointer can be moved by a relative delta ({@link SessionPointer#moveRelative}) — what mouselook reads. */
-	RELATIVE_POINTER,
+    /** Pointer can be moved by a relative delta ({@link SessionPointer#moveRelative}) — what mouselook reads. */
+    RELATIVE_POINTER,
 
-	/**
-	 * Clicks land on the target while it stays in the background <em>and</em> games accept them as hardware.
-	 * A host session deliberately does <b>not</b> advertise this: its only background-safe path is
-	 * {@code XSendEvent}, which Wine/Proton/SDL drop, so a reliable click there means moving the real cursor
-	 * and foregrounding the window. Only a nested {@code :N} session, whose global pointer is the bot's alone,
-	 * can offer it.
-	 */
-	BACKGROUND_CLICK,
+    /**
+     * Clicks land on the target while it stays in the background <em>and</em> games accept them as hardware.
+     * A host session deliberately does <b>not</b> advertise this: its only background-safe path is
+     * {@code XSendEvent}, which Wine/Proton/SDL drop, so a reliable click there means moving the real cursor
+     * and foregrounding the window. Only a nested {@code :N} session, whose global pointer is the bot's alone,
+     * can offer it.
+     */
+    BACKGROUND_CLICK,
 
-	/** Input focus is isolated from the user's desktop — driving this session never steals the user's focus. */
-	ISOLATED_FOCUS,
+    /** Input focus is isolated from the user's desktop — driving this session never steals the user's focus. */
+    ISOLATED_FOCUS,
 
-	/** Multiple independent sessions can run at once without cross-talk (distinct displays/pointers). */
-	MULTI_SESSION,
+    /** Multiple independent sessions can run at once without cross-talk (distinct displays/pointers). */
+    MULTI_SESSION,
 
-	/** Hardware-accelerated OpenGL is available in the session (vs. a software rasterizer). */
-	HARDWARE_GL,
+    /** Hardware-accelerated OpenGL is available in the session (vs. a software rasterizer). */
+    HARDWARE_GL,
 
-	/** A working Vulkan device is available in the session. */
-	VULKAN,
+    /** A working Vulkan device is available in the session. */
+    VULKAN,
 
-	/** The session can produce a pixel frame of its target ({@link DesktopSession#capture()}). */
-	SCREEN_CAPTURE,
+    /** The session can produce a pixel frame of its target ({@link DesktopSession#capture()}). */
+    SCREEN_CAPTURE,
 
-	/** The session can launch a fresh target into itself ({@link DesktopSession#launch}). */
-	WINDOW_LAUNCH,
+    /** The session can launch a fresh target into itself ({@link DesktopSession#launch}). */
+    WINDOW_LAUNCH,
 
-	/** The session can attach to an already-existing window ({@link DesktopSession#attach}). */
-	WINDOW_ATTACH
+    /** The session can attach to an already-existing window ({@link DesktopSession#attach}). */
+    WINDOW_ATTACH
 }

@@ -19,27 +19,27 @@ package com.botmaker.session;
  */
 public final class ActiveSession {
 
-	private static volatile DesktopSession current;
+    private static volatile DesktopSession current;
 
-	private ActiveSession() {}
+    private ActiveSession() {}
 
-	/** Register {@code session} as the active one, or {@code null} to detach (equivalent to {@link #clear()}). */
-	public static void set(DesktopSession session) {
-		current = session;
-	}
+    /** Register {@code session} as the active one, or {@code null} to detach (equivalent to {@link #clear()}). */
+    public static void set(DesktopSession session) {
+        current = session;
+    }
 
-	/** The active session, or {@code null} when none is registered (the default — today's {@code :0} behaviour). */
-	public static DesktopSession get() {
-		return current;
-	}
+    /** The active session, or {@code null} when none is registered (the default — today's {@code :0} behaviour). */
+    public static DesktopSession get() {
+        return current;
+    }
 
-	/** Whether a session is currently registered. */
-	public static boolean isActive() {
-		return current != null;
-	}
+    /** Whether a session is currently registered. */
+    public static boolean isActive() {
+        return current != null;
+    }
 
-	/** Detach any active session. Does <b>not</b> close it — that is the setter's responsibility. */
-	public static void clear() {
-		current = null;
-	}
+    /** Detach any active session. Does <b>not</b> close it — that is the setter's responsibility. */
+    public static void clear() {
+        current = null;
+    }
 }

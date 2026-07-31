@@ -47,267 +47,267 @@ import java.util.Set;
  */
 public final class AdoptedSession implements DesktopSession {
 
-	/** System property naming a live private display to adopt, e.g. {@code :1}. */
-	public static final String DISPLAY_PROPERTY = "botmaker.session.display";
-	/** System property naming the X window id (decimal or {@code 0x} hex) the owner has attached, if known. */
-	public static final String WINDOW_PROPERTY = "botmaker.session.window";
-	/** System property naming the owner's backend id ({@code gamescope}/{@code xephyr}) — it sets input policy. */
-	public static final String BACKEND_PROPERTY = "botmaker.session.owner.backend";
+    /** System property naming a live private display to adopt, e.g. {@code :1}. */
+    public static final String DISPLAY_PROPERTY = "botmaker.session.display";
+    /** System property naming the X window id (decimal or {@code 0x} hex) the owner has attached, if known. */
+    public static final String WINDOW_PROPERTY = "botmaker.session.window";
+    /** System property naming the owner's backend id ({@code gamescope}/{@code xephyr}) — it sets input policy. */
+    public static final String BACKEND_PROPERTY = "botmaker.session.owner.backend";
 
-	private final String displayName;
-	private final LinuxController controller;
-	/** A second connection for EWMH/liveness reads, separate from the controller's own. */
-	private final Pointer x11Display;
-	private final SessionAttachment attachment;
-	private final ControllerPointer pointer;
-	private final ControllerKeyboard keyboard;
-	private volatile boolean closed;
+    private final String displayName;
+    private final LinuxController controller;
+    /** A second connection for EWMH/liveness reads, separate from the controller's own. */
+    private final Pointer x11Display;
+    private final SessionAttachment attachment;
+    private final ControllerPointer pointer;
+    private final ControllerKeyboard keyboard;
+    private volatile boolean closed;
 
-	private AdoptedSession(String displayName, LinuxController controller, Pointer x11Display) {
-		this.displayName = displayName;
-		this.controller = controller;
-		this.x11Display = x11Display;
-		this.attachment = new SessionAttachment(controller, x11Display, "adopted " + displayName);
-		this.pointer = new ControllerPointer(controller);
-		this.keyboard = new ControllerKeyboard(controller, this::attached);
-		// Same contract as a nested session: the input backend asks for the driven window on every use, because the
-		// attachment re-resolves when the launcher chain swaps windows under us.
-		controller.setDrivenWindow(this::attachedHandle);
-	}
+    private AdoptedSession(String displayName, LinuxController controller, Pointer x11Display) {
+        this.displayName = displayName;
+        this.controller = controller;
+        this.x11Display = x11Display;
+        this.attachment = new SessionAttachment(controller, x11Display, "adopted " + displayName);
+        this.pointer = new ControllerPointer(controller);
+        this.keyboard = new ControllerKeyboard(controller, this::attached);
+        // Same contract as a nested session: the input backend asks for the driven window on every use, because the
+        // attachment re-resolves when the launcher chain swaps windows under us.
+        controller.setDrivenWindow(this::attachedHandle);
+    }
 
-	/**
-	 * What the properties say to adopt, or {@code null} when nothing does. This is the whole hand-off: the process
-	 * that owns the session passes {@link #DISPLAY_PROPERTY} (and, when it has them, the attached window and its
-	 * backend) to the JVM it spawns.
-	 */
-	public static AdoptedSession fromProperties() {
-		return adopt(System.getProperty(DISPLAY_PROPERTY),
-			System.getProperty(WINDOW_PROPERTY),
-			NestedSession.Backend.fromId(System.getProperty(BACKEND_PROPERTY))
-				.orElse(NestedSession.Backend.GAMESCOPE));
-	}
+    /**
+     * What the properties say to adopt, or {@code null} when nothing does. This is the whole hand-off: the process
+     * that owns the session passes {@link #DISPLAY_PROPERTY} (and, when it has them, the attached window and its
+     * backend) to the JVM it spawns.
+     */
+    public static AdoptedSession fromProperties() {
+        return adopt(System.getProperty(DISPLAY_PROPERTY),
+            System.getProperty(WINDOW_PROPERTY),
+            NestedSession.Backend.fromId(System.getProperty(BACKEND_PROPERTY))
+                .orElse(NestedSession.Backend.GAMESCOPE));
+    }
 
-	/**
-	 * The JVM arguments that offer {@code session} to a process we are about to spawn — the producing half of
-	 * {@link #fromProperties()}, kept beside it so the two can't drift on a property name. Empty for a
-	 * {@code null} session, so a caller composes it unconditionally.
-	 *
-	 * <p>The window id is included because the owner knows which window it settled on after the launcher chain
-	 * finished swapping them; the adopting bot would otherwise just take the newest top-level and could pick up a
-	 * leftover dialog. It is advisory — {@link #adopt} falls back to the newest when that window has since gone.
-	 */
-	public static List<String> handoffArguments(NestedSession session) {
-		if (session == null) {
-			return List.of();
-		}
-		List<String> args = new ArrayList<>(List.of(
-			"-D" + DISPLAY_PROPERTY + "=" + session.displayName(),
-			"-D" + BACKEND_PROPERTY + "=" + session.backend().id()));
-		long window = session.attachedWindowId();
-		if (window != 0) {
-			args.add("-D" + WINDOW_PROPERTY + "=" + window);
-		}
-		return args;
-	}
+    /**
+     * The JVM arguments that offer {@code session} to a process we are about to spawn — the producing half of
+     * {@link #fromProperties()}, kept beside it so the two can't drift on a property name. Empty for a
+     * {@code null} session, so a caller composes it unconditionally.
+     *
+     * <p>The window id is included because the owner knows which window it settled on after the launcher chain
+     * finished swapping them; the adopting bot would otherwise just take the newest top-level and could pick up a
+     * leftover dialog. It is advisory — {@link #adopt} falls back to the newest when that window has since gone.
+     */
+    public static List<String> handoffArguments(NestedSession session) {
+        if (session == null) {
+            return List.of();
+        }
+        List<String> args = new ArrayList<>(List.of(
+            "-D" + DISPLAY_PROPERTY + "=" + session.displayName(),
+            "-D" + BACKEND_PROPERTY + "=" + session.backend().id()));
+        long window = session.attachedWindowId();
+        if (window != 0) {
+            args.add("-D" + WINDOW_PROPERTY + "=" + window);
+        }
+        return args;
+    }
 
-	/**
-	 * Adopt {@code displayName}, attaching to {@code windowId} when it names a live window and otherwise to the
-	 * newest top-level there. Returns {@code null} — never throws — when there is nothing to adopt: no display
-	 * given, or it doesn't accept a connection (its owner has gone away since we were told about it). The caller's
-	 * fallback is its normal launch, so a failure here has to be cheap and quiet.
-	 *
-	 * @param backend the owner's backend, which decides the pointer-warp convention and input timing: gamescope's
-	 *                Xwayland reads an absolute warp as window-relative, and getting that wrong puts every click
-	 *                at the wrong place rather than failing outright
-	 */
-	public static AdoptedSession adopt(String displayName, String windowId, NestedSession.Backend backend) {
-		if (displayName == null || displayName.isBlank()) {
-			return null;
-		}
-		String display = displayName.trim();
-		Pointer x11 = X11.INSTANCE.XOpenDisplay(display);
-		if (x11 == null) {
-			Diag.log("[Session] can't adopt " + display + ": it doesn't accept a connection (owner gone?)");
-			return null;
-		}
-		LinuxController controller;
-		try {
-			controller = LinuxController.forDisplay(display, "xtest",
-				SessionBackends.pointerWarpFor(backend), SessionBackends.inputTimingFor(backend));
-		} catch (Exception e) {
-			X11.INSTANCE.XCloseDisplay(x11);
-			Diag.error("[Session] can't adopt " + display + ": " + e.getMessage());
-			return null;
-		}
-		AdoptedSession session = new AdoptedSession(display, controller, x11);
-		GenericWindow window = session.windowById(windowId);
-		if (window == null) {
-			window = session.newestWindow();
-		}
-		if (window != null) {
-			session.attach(window);
-		}
-		Diag.log("[Session] adopted the live " + backend + " display " + display + " — attached to "
-			+ (window == null ? "nothing yet" : "'" + window.getTitle() + "'"));
-		return session;
-	}
+    /**
+     * Adopt {@code displayName}, attaching to {@code windowId} when it names a live window and otherwise to the
+     * newest top-level there. Returns {@code null} — never throws — when there is nothing to adopt: no display
+     * given, or it doesn't accept a connection (its owner has gone away since we were told about it). The caller's
+     * fallback is its normal launch, so a failure here has to be cheap and quiet.
+     *
+     * @param backend the owner's backend, which decides the pointer-warp convention and input timing: gamescope's
+     *                Xwayland reads an absolute warp as window-relative, and getting that wrong puts every click
+     *                at the wrong place rather than failing outright
+     */
+    public static AdoptedSession adopt(String displayName, String windowId, NestedSession.Backend backend) {
+        if (displayName == null || displayName.isBlank()) {
+            return null;
+        }
+        String display = displayName.trim();
+        Pointer x11 = X11.INSTANCE.XOpenDisplay(display);
+        if (x11 == null) {
+            Diag.log("[Session] can't adopt " + display + ": it doesn't accept a connection (owner gone?)");
+            return null;
+        }
+        LinuxController controller;
+        try {
+            controller = LinuxController.forDisplay(display, "xtest",
+                SessionBackends.pointerWarpFor(backend), SessionBackends.inputTimingFor(backend));
+        } catch (Exception e) {
+            X11.INSTANCE.XCloseDisplay(x11);
+            Diag.error("[Session] can't adopt " + display + ": " + e.getMessage());
+            return null;
+        }
+        AdoptedSession session = new AdoptedSession(display, controller, x11);
+        GenericWindow window = session.windowById(windowId);
+        if (window == null) {
+            window = session.newestWindow();
+        }
+        if (window != null) {
+            session.attach(window);
+        }
+        Diag.log("[Session] adopted the live " + backend + " display " + display + " — attached to "
+            + (window == null ? "nothing yet" : "'" + window.getTitle() + "'"));
+        return session;
+    }
 
-	@Override
-	public Set<Capability> capabilities() {
-		// A private display is a private display, whoever started it — so the guarantees a nested session makes
-		// hold here too. WINDOW_LAUNCH is the one that doesn't: launching belongs to the owner.
-		return EnumSet.of(
-			Capability.ABSOLUTE_POINTER,
-			Capability.RELATIVE_POINTER,
-			Capability.BACKGROUND_CLICK,
-			Capability.ISOLATED_FOCUS,
-			Capability.MULTI_SESSION,
-			Capability.SCREEN_CAPTURE,
-			Capability.WINDOW_ATTACH);
-	}
+    @Override
+    public Set<Capability> capabilities() {
+        // A private display is a private display, whoever started it — so the guarantees a nested session makes
+        // hold here too. WINDOW_LAUNCH is the one that doesn't: launching belongs to the owner.
+        return EnumSet.of(
+            Capability.ABSOLUTE_POINTER,
+            Capability.RELATIVE_POINTER,
+            Capability.BACKGROUND_CLICK,
+            Capability.ISOLATED_FOCUS,
+            Capability.MULTI_SESSION,
+            Capability.SCREEN_CAPTURE,
+            Capability.WINDOW_ATTACH);
+    }
 
-	@Override
-	public Rectangle screen() {
-		// Read off the display rather than remembered from a launch: the owner chose the size, and we were only
-		// told which display to join.
-		try {
-			return new Rectangle(0, 0, X11.INSTANCE.XDisplayWidth(x11Display, 0),
-				X11.INSTANCE.XDisplayHeight(x11Display, 0));
-		} catch (Exception e) {
-			return new Rectangle(0, 0, 0, 0);
-		}
-	}
+    @Override
+    public Rectangle screen() {
+        // Read off the display rather than remembered from a launch: the owner chose the size, and we were only
+        // told which display to join.
+        try {
+            return new Rectangle(0, 0, X11.INSTANCE.XDisplayWidth(x11Display, 0),
+                X11.INSTANCE.XDisplayHeight(x11Display, 0));
+        } catch (Exception e) {
+            return new Rectangle(0, 0, 0, 0);
+        }
+    }
 
-	@Override
-	public SessionPointer pointer() {
-		return pointer;
-	}
+    @Override
+    public SessionPointer pointer() {
+        return pointer;
+    }
 
-	@Override
-	public SessionKeyboard keyboard() {
-		return keyboard;
-	}
+    @Override
+    public SessionKeyboard keyboard() {
+        return keyboard;
+    }
 
-	@Override
-	public void attach(GenericWindow window) {
-		attachment.attach(window);
-	}
+    @Override
+    public void attach(GenericWindow window) {
+        attachment.attach(window);
+    }
 
-	@Override
-	public GenericWindow attached() {
-		return closed ? attachment.current() : attachment.resolve();
-	}
+    @Override
+    public GenericWindow attached() {
+        return closed ? attachment.current() : attachment.resolve();
+    }
 
-	/**
-	 * Does nothing but say so. The target is the owner's to start, and it is expected to be running already — this
-	 * is the class that exists precisely because a second launch would be handed to the first one by a
-	 * single-instance launcher and end up on a display nobody is watching.
-	 */
-	@Override
-	public void launch(LaunchSpec spec) {
-		Diag.log("[Session] adopted " + displayName + ": not launching "
-			+ (spec == null ? "anything" : spec.describe()) + " — the session's owner already has it up");
-	}
+    /**
+     * Does nothing but say so. The target is the owner's to start, and it is expected to be running already — this
+     * is the class that exists precisely because a second launch would be handed to the first one by a
+     * single-instance launcher and end up on a display nobody is watching.
+     */
+    @Override
+    public void launch(LaunchSpec spec) {
+        Diag.log("[Session] adopted " + displayName + ": not launching "
+            + (spec == null ? "anything" : spec.describe()) + " — the session's owner already has it up");
+    }
 
-	@Override
-	public BufferedImage capture() {
-		GenericWindow target = attached();
-		return target == null ? null : controller.captureWindow(target);
-	}
+    @Override
+    public BufferedImage capture() {
+        GenericWindow target = attached();
+        return target == null ? null : controller.captureWindow(target);
+    }
 
-	@Override
-	public SessionHealth health() {
-		if (closed) {
-			return SessionHealth.DEAD;
-		}
-		// We have no process handles here — the display answering a connection is the liveness we can observe, and
-		// it is the one that matters: when the owner's server dies, this session is over.
-		Pointer probe = X11.INSTANCE.XOpenDisplay(displayName);
-		if (probe == null) {
-			return SessionHealth.DEAD;
-		}
-		X11.INSTANCE.XCloseDisplay(probe);
-		return SessionHealth.HEALTHY;
-	}
+    @Override
+    public SessionHealth health() {
+        if (closed) {
+            return SessionHealth.DEAD;
+        }
+        // We have no process handles here — the display answering a connection is the liveness we can observe, and
+        // it is the one that matters: when the owner's server dies, this session is over.
+        Pointer probe = X11.INSTANCE.XOpenDisplay(displayName);
+        if (probe == null) {
+            return SessionHealth.DEAD;
+        }
+        X11.INSTANCE.XCloseDisplay(probe);
+        return SessionHealth.HEALTHY;
+    }
 
-	@Override
-	public NativeController controller() {
-		return controller;
-	}
+    @Override
+    public NativeController controller() {
+        return controller;
+    }
 
-	/** The display this session joined, e.g. {@code ":1"}. */
-	public String displayName() {
-		return displayName;
-	}
+    /** The display this session joined, e.g. {@code ":1"}. */
+    public String displayName() {
+        return displayName;
+    }
 
-	/**
-	 * Drop our own two X connections. It does <b>not</b> touch the display server, the window manager, the private
-	 * bus or the game: they belong to whoever brought the session up, and are very likely still in use.
-	 */
-	@Override
-	public void close() {
-		if (closed) {
-			return;
-		}
-		closed = true;
-		try { controller.close(); } catch (Throwable t) { Diag.error("[Session] adopted close: " + t.getMessage()); }
-		try { X11.INSTANCE.XCloseDisplay(x11Display); } catch (Throwable t) {
-			Diag.error("[Session] adopted close (ewmh): " + t.getMessage());
-		}
-		Diag.log("[Session] released the adopted display " + displayName + " (its owner keeps it)");
-	}
+    /**
+     * Drop our own two X connections. It does <b>not</b> touch the display server, the window manager, the private
+     * bus or the game: they belong to whoever brought the session up, and are very likely still in use.
+     */
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        try { controller.close(); } catch (Throwable t) { Diag.error("[Session] adopted close: " + t.getMessage()); }
+        try { X11.INSTANCE.XCloseDisplay(x11Display); } catch (Throwable t) {
+            Diag.error("[Session] adopted close (ewmh): " + t.getMessage());
+        }
+        Diag.log("[Session] released the adopted display " + displayName + " (its owner keeps it)");
+    }
 
-	private Pointer attachedHandle() {
-		GenericWindow window = attached();
-		return window == null ? null : (Pointer) window.getNativeHandle();
-	}
+    private Pointer attachedHandle() {
+        GenericWindow window = attached();
+        return window == null ? null : (Pointer) window.getNativeHandle();
+    }
 
-	/** The window {@code id} names (decimal, or {@code 0x…} hex) among the display's top-levels, or {@code null}. */
-	private GenericWindow windowById(String id) {
-		long wanted = parseWindowId(id);
-		if (wanted == 0) {
-			return null;
-		}
-		try {
-			for (GenericWindow w : controller.getAllWindows(true)) {
-				Object handle = w.getNativeHandle();
-				if (handle instanceof Pointer p && Pointer.nativeValue(p) == wanted) {
-					return w;
-				}
-			}
-		} catch (Exception e) {
-			Diag.log("[Session] adopted " + displayName + ": window scan failed: " + e.getMessage());
-		}
-		// Not an error: the owner told us what it had attached, and the launcher chain may have replaced it since.
-		Diag.log("[Session] adopted " + displayName + ": window " + id + " is gone — taking the newest instead");
-		return null;
-	}
+    /** The window {@code id} names (decimal, or {@code 0x…} hex) among the display's top-levels, or {@code null}. */
+    private GenericWindow windowById(String id) {
+        long wanted = parseWindowId(id);
+        if (wanted == 0) {
+            return null;
+        }
+        try {
+            for (GenericWindow w : controller.getAllWindows(true)) {
+                Object handle = w.getNativeHandle();
+                if (handle instanceof Pointer p && Pointer.nativeValue(p) == wanted) {
+                    return w;
+                }
+            }
+        } catch (Exception e) {
+            Diag.log("[Session] adopted " + displayName + ": window scan failed: " + e.getMessage());
+        }
+        // Not an error: the owner told us what it had attached, and the launcher chain may have replaced it since.
+        Diag.log("[Session] adopted " + displayName + ": window " + id + " is gone — taking the newest instead");
+        return null;
+    }
 
-	/** The newest top-level on the display, or {@code null} when it has none yet. */
-	private GenericWindow newestWindow() {
-		GenericWindow newest = null;
-		try {
-			for (GenericWindow w : controller.getAllWindows()) {
-				newest = w;
-			}
-		} catch (Exception e) {
-			Diag.log("[Session] adopted " + displayName + ": scan failed: " + e.getMessage());
-		}
-		return newest;
-	}
+    /** The newest top-level on the display, or {@code null} when it has none yet. */
+    private GenericWindow newestWindow() {
+        GenericWindow newest = null;
+        try {
+            for (GenericWindow w : controller.getAllWindows()) {
+                newest = w;
+            }
+        } catch (Exception e) {
+            Diag.log("[Session] adopted " + displayName + ": scan failed: " + e.getMessage());
+        }
+        return newest;
+    }
 
-	/** {@code 0} for anything that isn't a window id — the value no window has. */
-	static long parseWindowId(String id) {
-		if (id == null || id.isBlank()) {
-			return 0;
-		}
-		String s = id.trim();
-		try {
-			return s.toLowerCase(java.util.Locale.ROOT).startsWith("0x")
-				? Long.parseLong(s.substring(2), 16)
-				: Long.parseLong(s);
-		} catch (NumberFormatException e) {
-			return 0;
-		}
-	}
+    /** {@code 0} for anything that isn't a window id — the value no window has. */
+    static long parseWindowId(String id) {
+        if (id == null || id.isBlank()) {
+            return 0;
+        }
+        String s = id.trim();
+        try {
+            return s.toLowerCase(java.util.Locale.ROOT).startsWith("0x")
+                ? Long.parseLong(s.substring(2), 16)
+                : Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
 }

@@ -10,11 +10,11 @@ import com.botmaker.session.impl.HostSession;
  */
 public final class SessionStartException extends Exception {
 
-	public SessionStartException(String message) {
-		super(message);
-	}
+    public SessionStartException(String message) {
+        super(message);
+    }
 
-	public SessionStartException(String message, Throwable cause) {
-		super(message, cause);
-	}
+    public SessionStartException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

@@ -18,33 +18,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SessionReaperSweepTest {
 
-	@Test
-	void aParentSliceOfALiveSessionIsNotAbandoned() {
-		// systemd derives a parent slice from every dash, so a live s123-1 sits inside botmaker-sess-s123.slice —
-		// a name no session object is ever keyed by. Stopping it would take the live session down with it.
-		assertTrue(SessionReaper.isLive("s123", Set.of("s123-1")),
-			"the parent slice of a live session must never be swept");
-		assertTrue(SessionReaper.isLive("s123-1", Set.of("s123-1")));
-	}
+    @Test
+    void aParentSliceOfALiveSessionIsNotAbandoned() {
+        // systemd derives a parent slice from every dash, so a live s123-1 sits inside botmaker-sess-s123.slice —
+        // a name no session object is ever keyed by. Stopping it would take the live session down with it.
+        assertTrue(SessionReaper.isLive("s123", Set.of("s123-1")),
+            "the parent slice of a live session must never be swept");
+        assertTrue(SessionReaper.isLive("s123-1", Set.of("s123-1")));
+    }
 
-	@Test
-	void aSessionWeNoLongerHoldIsAbandoned() {
-		assertFalse(SessionReaper.isLive("s123-1", Set.of("s123-2")),
-			"a sibling being live says nothing about this one");
-		assertFalse(SessionReaper.isLive("s123", Set.of()));
-		assertFalse(SessionReaper.isLive("s123-1", List.of()));
-	}
+    @Test
+    void aSessionWeNoLongerHoldIsAbandoned() {
+        assertFalse(SessionReaper.isLive("s123-1", Set.of("s123-2")),
+            "a sibling being live says nothing about this one");
+        assertFalse(SessionReaper.isLive("s123", Set.of()));
+        assertFalse(SessionReaper.isLive("s123-1", List.of()));
+    }
 
-	@Test
-	void aPrefixThatIsNotASessionIsNotConfusedForOne() {
-		// s12 is not the parent of s123-1 — only a whole dash-separated segment counts.
-		assertFalse(SessionReaper.isLive("s12", Set.of("s123-1")));
-	}
+    @Test
+    void aPrefixThatIsNotASessionIsNotConfusedForOne() {
+        // s12 is not the parent of s123-1 — only a whole dash-separated segment counts.
+        assertFalse(SessionReaper.isLive("s12", Set.of("s123-1")));
+    }
 
-	@Test
-	void theSessionIdIsReadBackOutOfTheSliceName() {
-		assertEquals("s123-4", SessionReaper.sessionIdOf("botmaker-sess-s123-4.slice"));
-		assertEquals("s123", SessionReaper.sessionIdOf("botmaker-sess-s123.slice"));
-		assertEquals("s123-4", SessionReaper.sessionIdOf("botmaker-sess-s123-4"));
-	}
+    @Test
+    void theSessionIdIsReadBackOutOfTheSliceName() {
+        assertEquals("s123-4", SessionReaper.sessionIdOf("botmaker-sess-s123-4.slice"));
+        assertEquals("s123", SessionReaper.sessionIdOf("botmaker-sess-s123.slice"));
+        assertEquals("s123-4", SessionReaper.sessionIdOf("botmaker-sess-s123-4"));
+    }
 }

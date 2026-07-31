@@ -28,70 +28,70 @@ import com.sun.jna.Pointer;
  */
 public final class SessionAttachment {
 
-	private final NativeController controller;
-	/** Second X connection used only for the cheap liveness probe; {@code null} disables it (nothing to probe). */
-	private final Pointer x11Display;
-	/** How this attachment names itself in a log line — a session id and its display. */
-	private final String label;
+    private final NativeController controller;
+    /** Second X connection used only for the cheap liveness probe; {@code null} disables it (nothing to probe). */
+    private final Pointer x11Display;
+    /** How this attachment names itself in a log line — a session id and its display. */
+    private final String label;
 
-	private volatile GenericWindow attached;
+    private volatile GenericWindow attached;
 
-	public SessionAttachment(NativeController controller, Pointer x11Display, String label) {
-		this.controller = controller;
-		this.x11Display = x11Display;
-		this.label = label;
-	}
+    public SessionAttachment(NativeController controller, Pointer x11Display, String label) {
+        this.controller = controller;
+        this.x11Display = x11Display;
+        this.label = label;
+    }
 
-	/** Make {@code window} the target. */
-	public void attach(GenericWindow window) {
-		this.attached = window;
-	}
+    /** Make {@code window} the target. */
+    public void attach(GenericWindow window) {
+        this.attached = window;
+    }
 
-	/** The target as last resolved, with no round trip — what a closed session answers. */
-	public GenericWindow current() {
-		return attached;
-	}
+    /** The target as last resolved, with no round trip — what a closed session answers. */
+    public GenericWindow current() {
+        return attached;
+    }
 
-	/** The target, re-resolved when the attached window has died. See the class note. */
-	public GenericWindow resolve() {
-		GenericWindow current = attached;
-		if (current == null || isViewable(current)) {
-			return current;
-		}
-		GenericWindow replacement = newestWindow();
-		if (replacement == null) {
-			// Between windows — the game may be mid-transition. Keep the old reference so the session still reads
-			// as attached; this call's capture/input simply finds nothing, and the next one retries.
-			return current;
-		}
-		attached = replacement;
-		Diag.log("[Session] " + label + ": re-attached to '" + replacement.getTitle()
-			+ "' (the previous window was destroyed)");
-		return replacement;
-	}
+    /** The target, re-resolved when the attached window has died. See the class note. */
+    public GenericWindow resolve() {
+        GenericWindow current = attached;
+        if (current == null || isViewable(current)) {
+            return current;
+        }
+        GenericWindow replacement = newestWindow();
+        if (replacement == null) {
+            // Between windows — the game may be mid-transition. Keep the old reference so the session still reads
+            // as attached; this call's capture/input simply finds nothing, and the next one retries.
+            return current;
+        }
+        attached = replacement;
+        Diag.log("[Session] " + label + ": re-attached to '" + replacement.getTitle()
+            + "' (the previous window was destroyed)");
+        return replacement;
+    }
 
-	/** Whether {@code window} still exists and is mapped. */
-	private boolean isViewable(GenericWindow window) {
-		if (x11Display == null) {
-			return true; // nothing to probe with: never invent a death, so a live attachment is left alone
-		}
-		try {
-			return X11Utils.isWindowViewable(x11Display, (Pointer) window.getNativeHandle());
-		} catch (Exception e) {
-			return false;
-		}
-	}
+    /** Whether {@code window} still exists and is mapped. */
+    private boolean isViewable(GenericWindow window) {
+        if (x11Display == null) {
+            return true; // nothing to probe with: never invent a death, so a live attachment is left alone
+        }
+        try {
+            return X11Utils.isWindowViewable(x11Display, (Pointer) window.getNativeHandle());
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
-	/** The most recently mapped top-level on the display, or {@code null} when there is none. */
-	private GenericWindow newestWindow() {
-		GenericWindow newest = null;
-		try {
-			for (GenericWindow w : controller.getAllWindows()) {
-				newest = w;
-			}
-		} catch (Exception e) {
-			Diag.log("[Session] " + label + ": could not re-scan: " + e.getMessage());
-		}
-		return newest;
-	}
+    /** The most recently mapped top-level on the display, or {@code null} when there is none. */
+    private GenericWindow newestWindow() {
+        GenericWindow newest = null;
+        try {
+            for (GenericWindow w : controller.getAllWindows()) {
+                newest = w;
+            }
+        } catch (Exception e) {
+            Diag.log("[Session] " + label + ": could not re-scan: " + e.getMessage());
+        }
+        return newest;
+    }
 }

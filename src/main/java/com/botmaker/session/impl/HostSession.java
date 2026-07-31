@@ -37,91 +37,91 @@ import java.util.Set;
  */
 public final class HostSession implements DesktopSession {
 
-	private final NativeController controller;
-	private final ControllerPointer pointer;
-	private final ControllerKeyboard keyboard;
-	private volatile GenericWindow attached;
-	private volatile boolean closed;
+    private final NativeController controller;
+    private final ControllerPointer pointer;
+    private final ControllerKeyboard keyboard;
+    private volatile GenericWindow attached;
+    private volatile boolean closed;
 
-	/** Wraps {@code controller} without taking ownership of it (see the class note on {@link #close()}). */
-	public HostSession(NativeController controller) {
-		this.controller = controller;
-		this.pointer = new ControllerPointer(controller);
-		this.keyboard = new ControllerKeyboard(controller, this::attached);
-	}
+    /** Wraps {@code controller} without taking ownership of it (see the class note on {@link #close()}). */
+    public HostSession(NativeController controller) {
+        this.controller = controller;
+        this.pointer = new ControllerPointer(controller);
+        this.keyboard = new ControllerKeyboard(controller, this::attached);
+    }
 
-	/** A host session over the process-wide default controller ({@link NativeControllerFactory#get()}). */
-	public static HostSession ofDefault() {
-		return new HostSession(NativeControllerFactory.get());
-	}
+    /** A host session over the process-wide default controller ({@link NativeControllerFactory#get()}). */
+    public static HostSession ofDefault() {
+        return new HostSession(NativeControllerFactory.get());
+    }
 
-	@Override
-	public Set<Capability> capabilities() {
-		// No BACKGROUND_CLICK / ISOLATED_FOCUS / MULTI_SESSION: a shared desktop can't offer them (see class doc).
-		return EnumSet.of(
-			Capability.ABSOLUTE_POINTER,
-			Capability.RELATIVE_POINTER,
-			Capability.SCREEN_CAPTURE,
-			Capability.WINDOW_ATTACH,
-			Capability.WINDOW_LAUNCH);
-	}
+    @Override
+    public Set<Capability> capabilities() {
+        // No BACKGROUND_CLICK / ISOLATED_FOCUS / MULTI_SESSION: a shared desktop can't offer them (see class doc).
+        return EnumSet.of(
+            Capability.ABSOLUTE_POINTER,
+            Capability.RELATIVE_POINTER,
+            Capability.SCREEN_CAPTURE,
+            Capability.WINDOW_ATTACH,
+            Capability.WINDOW_LAUNCH);
+    }
 
-	@Override
-	public Rectangle screen() {
-		try {
-			java.awt.Dimension d = Toolkit.getDefaultToolkit().getScreenSize();
-			return new Rectangle(0, 0, d.width, d.height);
-		} catch (Throwable t) {
-			// Headless or no display — the caller treats a zero rectangle as "unknown".
-			return new Rectangle(0, 0, 0, 0);
-		}
-	}
+    @Override
+    public Rectangle screen() {
+        try {
+            java.awt.Dimension d = Toolkit.getDefaultToolkit().getScreenSize();
+            return new Rectangle(0, 0, d.width, d.height);
+        } catch (Throwable t) {
+            // Headless or no display — the caller treats a zero rectangle as "unknown".
+            return new Rectangle(0, 0, 0, 0);
+        }
+    }
 
-	@Override
-	public SessionPointer pointer() {
-		return pointer;
-	}
+    @Override
+    public SessionPointer pointer() {
+        return pointer;
+    }
 
-	@Override
-	public SessionKeyboard keyboard() {
-		return keyboard;
-	}
+    @Override
+    public SessionKeyboard keyboard() {
+        return keyboard;
+    }
 
-	@Override
-	public void attach(GenericWindow window) {
-		this.attached = window;
-	}
+    @Override
+    public void attach(GenericWindow window) {
+        this.attached = window;
+    }
 
-	@Override
-	public GenericWindow attached() {
-		return attached;
-	}
+    @Override
+    public GenericWindow attached() {
+        return attached;
+    }
 
-	@Override
-	public void launch(LaunchSpec spec) {
-		// The host launch path exactly as it is today: onto the user's desktop, no display retargeting.
-		Launcher.start(spec);
-	}
+    @Override
+    public void launch(LaunchSpec spec) {
+        // The host launch path exactly as it is today: onto the user's desktop, no display retargeting.
+        Launcher.start(spec);
+    }
 
-	@Override
-	public BufferedImage capture() {
-		GenericWindow target = attached;
-		return target == null ? null : controller.captureWindow(target);
-	}
+    @Override
+    public BufferedImage capture() {
+        GenericWindow target = attached;
+        return target == null ? null : controller.captureWindow(target);
+    }
 
-	@Override
-	public NativeController controller() {
-		return controller;
-	}
+    @Override
+    public NativeController controller() {
+        return controller;
+    }
 
-	@Override
-	public void close() {
-		// Intentionally does NOT close the wrapped controller — it is shared (see the class note).
-		closed = true;
-	}
+    @Override
+    public void close() {
+        // Intentionally does NOT close the wrapped controller — it is shared (see the class note).
+        closed = true;
+    }
 
-	/** True once {@link #close()} has been called — for tests/asserts; the controller stays open regardless. */
-	public boolean isClosed() {
-		return closed;
-	}
+    /** True once {@link #close()} has been called — for tests/asserts; the controller stays open regardless. */
+    public boolean isClosed() {
+        return closed;
+    }
 }

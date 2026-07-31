@@ -8,12 +8,12 @@ package com.botmaker.session;
  */
 public enum SessionHealth {
 
-	/** Everything the session needs is up. */
-	HEALTHY,
+    /** Everything the session needs is up. */
+    HEALTHY,
 
-	/** The display is alive but part of the tree (window manager, target app) died — recoverable. */
-	DEGRADED,
+    /** The display is alive but part of the tree (window manager, target app) died — recoverable. */
+    DEGRADED,
 
-	/** The display/session is gone; it must be rebuilt from scratch. */
-	DEAD
+    /** The display/session is gone; it must be rebuilt from scratch. */
+    DEAD
 }

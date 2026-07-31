@@ -19,29 +19,29 @@ import java.util.function.Supplier;
  */
 public final class ControllerKeyboard implements SessionKeyboard {
 
-	private final NativeController controller;
-	private final Supplier<GenericWindow> target;
+    private final NativeController controller;
+    private final Supplier<GenericWindow> target;
 
-	public ControllerKeyboard(NativeController controller, Supplier<GenericWindow> target) {
-		this.controller = controller;
-		this.target = target;
-	}
+    public ControllerKeyboard(NativeController controller, Supplier<GenericWindow> target) {
+        this.controller = controller;
+        this.target = target;
+    }
 
-	@Override
-	public void keyDown(int nativeKeyCode) {
-		GenericWindow w = target.get();
-		if (w != null) controller.keyDown(w, nativeKeyCode); else controller.keyDown(nativeKeyCode);
-	}
+    @Override
+    public void keyDown(int nativeKeyCode) {
+        GenericWindow w = target.get();
+        if (w != null) controller.keyDown(w, nativeKeyCode); else controller.keyDown(nativeKeyCode);
+    }
 
-	@Override
-	public void keyUp(int nativeKeyCode) {
-		GenericWindow w = target.get();
-		if (w != null) controller.keyUp(w, nativeKeyCode); else controller.keyUp(nativeKeyCode);
-	}
+    @Override
+    public void keyUp(int nativeKeyCode) {
+        GenericWindow w = target.get();
+        if (w != null) controller.keyUp(w, nativeKeyCode); else controller.keyUp(nativeKeyCode);
+    }
 
-	@Override
-	public void type(String text) {
-		GenericWindow w = target.get();
-		if (w != null) controller.typeText(w, text); else controller.typeText(text);
-	}
+    @Override
+    public void type(String text) {
+        GenericWindow w = target.get();
+        if (w != null) controller.typeText(w, text); else controller.typeText(text);
+    }
 }
