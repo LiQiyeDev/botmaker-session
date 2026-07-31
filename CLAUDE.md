@@ -38,7 +38,7 @@ is now the only thing keeping a caller out.
 | Package | Holds | Status |
 |---------|-------|--------|
 | `com.botmaker.session` | `DesktopSession`, `Capability`, `SessionHealth`, `SessionPointer`, `SessionKeyboard`, `ActiveSession`, `PointerPolicy`, `SessionStartException` | the contract |
-| `…session.display` | `SessionDisplay` + the two backends (`NestedDisplay`/Xephyr, `GamescopeDisplay`), `DisplayReadiness`, `GpuProbe`, `SessionBackends` | plumbing |
+| `…session.display` | `SessionDisplay` + the two backends (`NestedDisplay`/Xephyr, `GamescopeDisplay`), `DisplayReadiness`, `SessionBackends` | plumbing |
 | `…session.impl` | `NestedSession`, `AdoptedSession`, `HostSession`, `SessionAttachment`, `SessionHostWindow` | `NestedSession`/`AdoptedSession`/`HostSession` are API; the other two are plumbing |
 | `…session.process` | `SessionReaper`, `SessionMembers`, `SessionBus`, `AppOutputLog` | plumbing |
 | `…session.input` | `ControllerPointer`, `ControllerKeyboard` | plumbing |

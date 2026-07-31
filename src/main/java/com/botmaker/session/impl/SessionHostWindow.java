@@ -45,8 +45,6 @@ import java.util.Set;
  */
 public final class SessionHostWindow {
 
-    /** How long to wait for the server to map its window on the host desktop before giving up on hiding it. */
-    private static final long FIND_TIMEOUT_MS = 3_000;
     private static final long POLL_MS = 100;
 
     private final String hostDisplay;
@@ -62,7 +60,7 @@ public final class SessionHostWindow {
 
     /**
      * Locate the host-desktop window of the display server rooted at {@code serverPid}, or {@code null} when it
-     * can't be identified within {@link #FIND_TIMEOUT_MS}.
+     * can't be identified within {@code timeoutMs}.
      *
      * <p>Two signals, in order. {@code _NET_WM_PID} matched against {@code serverPid} <em>or any of its
      * descendants</em> — under the systemd strategy {@code serverPid} is the {@code systemd-run --scope} wrapper,
@@ -71,12 +69,8 @@ public final class SessionHostWindow {
      *
      * @param serverPid the pid the session launched to get the server up (see {@link SessionDisplay#serverPid()})
      * @param nameHint  the server binary's name, e.g. {@code "gamescope"} — used only as the fallback match
+     * @param timeoutMs how long to wait for the server to map its window before giving up
      */
-    public static SessionHostWindow find(long serverPid, String nameHint) {
-        return find(serverPid, nameHint, FIND_TIMEOUT_MS);
-    }
-
-    /** As {@link #find(long, String)}, with the wait bounded by {@code timeoutMs} — tests don't wait 3 seconds. */
     public static SessionHostWindow find(long serverPid, String nameHint, long timeoutMs) {
         String hostDisplay = System.getenv("DISPLAY");
         if (hostDisplay == null || hostDisplay.isBlank()) {

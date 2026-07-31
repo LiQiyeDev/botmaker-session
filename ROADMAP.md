@@ -16,6 +16,36 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-07-31 — refactor Phase 2: `GpuProbe` deleted
+
+Part of the repo-wide refactor scheduled in `../docs/refactor/02-execution-order.md`; this module's
+share is unit **SS5**.
+
+### Done
+
+- **Deleted `display/GpuProbe.java` (378 lines, 8.9% of the module).** Nothing in session, shared,
+  sdk, studio or any test referenced it — verified by grep across all four modules. Its javadoc
+  called it the "Phase-0 go/no-go probe" that "runs in Studio's diagnostics panel"; Studio has never
+  referenced it. The question it answered was settled structurally instead: the module ships
+  gamescope *because* Xephyr is software-only, so the probe's verdict is a design premise now, not a
+  runtime one. If the diagnostic is wanted again it belongs in `tools/` as a script, not on a
+  library's classpath.
+- With it went the module's **only `ExecutorService`, only `System.out`, only `main()`, one of the
+  six copies of `onPath`** (shared has had `Executables.onPath` all along), and **2 of its 7
+  `ProcessBuilder` sites** — 5 remain. Coverage moved **26.5% → 30.6%** line, and
+  `com.botmaker.session.display` dropped off the least-covered-packages table entirely.
+- **Deleted the `SessionHostWindow.find(long, String)` 2-arg overload** and its `FIND_TIMEOUT_MS`.
+  Every caller — one production site, two tests — passes an explicit timeout, so the default was
+  never used. `timeoutMs` is now a documented parameter rather than a constant referenced from two
+  javadoc blocks.
+
+Note for anyone reading the audit: `12-session.md`'s **SS17** says to reformat `SessionBackends` *to
+tabs*. That was written when session was 36-of-41 tab-indented. Phase 1 converged the whole repo on
+4 spaces, and `SessionBackends` was already one of the two files conforming — the other 36 moved to
+meet it. `GpuProbe`, the other 4-space file, is gone with this entry.
+
+---
+
 ## 2026-07-30 — extracted from `botmaker-shared` into its own module
 
 The session stack had become the part of the codebase changing every week (Phases 9–13 were all session
