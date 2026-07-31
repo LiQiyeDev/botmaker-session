@@ -1,0 +1,67 @@
+name: Session live tests
+
+# The nested-session supervisor proven end-to-end, headlessly. Xvfb is the host X server; our Xephyr :N
+# nests inside it, so the same live NestedSessionLiveTest a maintainer runs on their desktop runs unattended
+# here. GitHub runners have no per-user systemd/session bus, so SessionReaper takes its ProcessBuilder
+# descendant-kill fallback (the systemd --scope path is exercised on the real box) — either way the test
+# asserts zero orphan Xephyr.
+#
+# This workflow lived in botmaker-shared and had been dead since the session extraction (bug B5): it watched
+# com/botmaker/shared/session/**, a path that no longer exists, and ran a test that is no longer in that repo.
+
+on:
+  push:
+    paths:
+      - 'src/main/java/com/botmaker/session/**'
+      - 'src/test/java/com/botmaker/session/**'
+      - 'pom.xml'
+      - '.github/workflows/session-live.yml'
+  pull_request:
+    paths:
+      - 'src/main/java/com/botmaker/session/**'
+      - 'src/test/java/com/botmaker/session/**'
+      - 'pom.xml'
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out botmaker-shared
+        uses: actions/checkout@v4
+        with:
+          repository: LiQiyeDev/botmaker-shared
+          path: .deps/botmaker-shared
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install botmaker-shared (0.0.0-SNAPSHOT)
+        run: mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
+
+      - name: Install the nested-display stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xserver-xephyr openbox \
+            x11-utils x11-xserver-utils x11-apps xterm xdotool xauth
+
+      - name: Run the live session suite under Xvfb
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            mvn -B test \
+              -Dtest=NestedSessionLiveTest \
+              -Dbotmaker.live=true \
+              -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
