@@ -16,6 +16,54 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-07-31 — refactor Phase 3: the test floor (SS3, SS4)
+
+Part of the repo-wide refactor scheduled in `../docs/refactor/02-execution-order.md`; this module's share is
+units **SS3** and **SS4**, both test-only. **69 → 80 tests**, no production code touched.
+
+### Done
+
+- **SS4 — the OpenCV/Tess4J exclusion stops being a `grep` a reviewer has to remember.** `CLAUDE.md` rule 2
+  was enforced by a `mvn dependency:tree | grep` in prose. It is now `NoOcvOnTheClasspathTest`, from two
+  angles: the banned classes are *not resolvable* at test runtime, and every class in this module *links*
+  without one appearing. dadb is asserted **present** in the same file, because that exclusion looks equally
+  harmless on a pom review and is the one that would break `emu-app:` launches.
+- **SS3 item 3 — `AdoptedSession` owns nothing**, asserted structurally: it holds no `SessionReaper` and no
+  `SessionMembers`, with `NestedSession` as the control (it must hold one, or the first assertion is checking
+  nothing after a rename). The refactor this guards against is the tempting one — unifying `close()` across
+  the two session types, which differ by little else — and its symptom is a user's live session being torn
+  down under them because a bot they started finished.
+- **SS3 item 5 — the teardown never signals the JVM running it**, through `SessionMembers.of` across four
+  display names, checking this pid *and its whole ancestry*. `SessionMembersTest` covered `of()`; nothing
+  covered the guarantee on the path `NestedSession.shutdownMembers` actually takes.
+
+### SS3 item 1 — B8 measured, and the audit's severity is wrong in an interesting direction
+
+`SessionReaperRaceTest` races `launch()` against `reap()` 40 times per run. **It passes, and it is not B8's
+gate** — the class javadoc says so at length rather than letting a green test imply coverage it does not have.
+
+Racing it **240 times** gave 109 refusals, 131 reaps, **zero leaks**. The window does not open under systemd,
+structurally: `reap()` spends seconds in `systemctl --user stop` before it ever reads `launched`, so a launch
+that passed the guard has always finished its bookkeeping by the time the kill loop runs — and the slice stop
+takes the cgroup down regardless of what the list holds. The `launched` list is the entire teardown **only
+under the no-systemd fallback**, which is where B8 actually bites and which no test on this box can produce
+(`systemdAvailable` is a static cached probe with no injection point).
+
+So **SS6 in Phase 4 needs a seam that makes the strategy injectable**, not just the one-line lock. Without it
+the fix ships unverified and the fallback path keeps its current coverage, which is none. Recorded as a Phase 3
+addendum under B8 in `../docs/refactor/bugs.md`.
+
+### Deliberately not written
+
+`AdoptedSession`'s non-ownership and `NestedSession`'s launch/close interleaving (item 2) are asserted
+structurally, not behaviourally. Behaviourally both need a live private display with a real game in it — the
+`-Dbotmaker.live=true` suite — and a structural assertion that runs everywhere catches the specific refactor
+that would cause the damage. A capability assertion was written, found to pass **vacuously** (capabilities are
+built in an instance method, so the static-field scan behind it found nothing and reported success), and
+deleted rather than shipped. That is the same defect Phase 2 deleted `ImageFinderGroupTest` for.
+
+---
+
 ## 2026-07-31 — refactor Phase 2: `GpuProbe` deleted
 
 Part of the repo-wide refactor scheduled in `../docs/refactor/02-execution-order.md`; this module's
