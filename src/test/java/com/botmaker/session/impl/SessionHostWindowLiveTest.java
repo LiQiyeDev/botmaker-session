@@ -2,6 +2,8 @@ package com.botmaker.session.impl;
 
 import com.botmaker.session.SessionStartException;
 
+import com.botmaker.shared.capture.GenericWindow;
+import com.botmaker.shared.capture.NativeControllerFactory;
 import com.botmaker.shared.capture.linux.X11;
 import com.botmaker.shared.capture.linux.X11Utils;
 import com.botmaker.shared.launch.LaunchSpec;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.awt.image.BufferedImage;
 import java.io.File;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -81,6 +84,56 @@ class SessionHostWindowLiveTest {
         } finally {
             session.close();
         }
+    }
+
+    /**
+     * The other direction, and the one Studio's overlay editor rests on: a <em>host-side</em> X capture of the
+     * session's host window reads the session's real pixels. The test above proves the session can read itself;
+     * that says nothing about whether the host window is a real drawable rather than a compositor placeholder,
+     * and under gamescope it is not obvious — the frames are composited by gamescope's own Vulkan swapchain, and
+     * a host capture that came back black would mean the overlay draws over a window it cannot see into.
+     *
+     * <p>Asserted as "not uniformly black" rather than against a reference image: the point is that pixels arrive
+     * at all. A capture that fails this returns a perfectly black frame, not a slightly wrong one.
+     */
+    @Test
+    void theHostWindowReadsRealPixelsFromTheHostSide() throws Exception {
+        assumeLive();
+        NestedSession session = startSession();
+        try {
+            session.launch(LaunchSpec.parse("cli:xterm -e sleep 300"));
+            assertNotNull(session.attached(), "a window should have appeared on " + session.displayName());
+            SessionHostWindow hostWindow = findHostWindow(session);
+
+            // The overlay reveals before it captures, for exactly this reason: XGetImage on an unmapped drawable
+            // is a BadMatch, so a still-minimized window reads as a failure rather than as black.
+            hostWindow.reveal();
+            assertTrue(awaitViewable(hostWindow.windowId(), 16_000), "the host window should be back on screen");
+            Thread.sleep(1_000);   // let the host compositor put a frame in it
+
+            long id = session.hostWindowId();
+            assertEquals(hostWindow.windowId(), id, "the session should publish the window the search found");
+
+            BufferedImage frame = NativeControllerFactory.get().captureWindow(
+                new GenericWindow(new Pointer(id), backend().binaryName(), null));
+            assertNotNull(frame, "a host-side capture of the session's host window should return a frame");
+            assertTrue(hasContent(frame), "the host-side capture came back uniformly black — the overlay would "
+                + "be drawing over a window it cannot see into");
+        } finally {
+            session.close();
+        }
+    }
+
+    /** Whether {@code frame} has any non-black pixel — sampled, since one is enough to answer the question. */
+    private static boolean hasContent(BufferedImage frame) {
+        for (int y = 0; y < frame.getHeight(); y += 4) {
+            for (int x = 0; x < frame.getWidth(); x += 4) {
+                if ((frame.getRGB(x, y) & 0xFFFFFF) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** The backend under test — the frame scheduler is the thing being measured, so it is a knob, not a constant. */

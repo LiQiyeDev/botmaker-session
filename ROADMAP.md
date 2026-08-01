@@ -16,6 +16,33 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-01 — improvements Phase 5: publishing the host window so Studio can overlay a session
+
+**Done**
+
+- `NestedSession.hostWindowId()` — the X id of the display server's own window on the host desktop, `0` while
+  it isn't known yet (a normal answer for the first seconds: the window is found on the hider thread, and
+  gamescope doesn't map it until a client maps something on its Xwayland). `revealHostWindow()` went from
+  private to public alongside it, since a host-side tool has to un-minimize the window before it can look at it.
+  Both are plumbing, not contract — but the id, not the title, is the only thing that names a gamescope host
+  window: gamescope renames its output window after whatever app is inside it, and a second unmanaged window of
+  its own carries the same `WM_CLASS`. (Only the managed one is in `_NET_CLIENT_LIST`, so `SessionHostWindow.find`
+  was already picking correctly — measured, not assumed.)
+- `SessionHostWindowLiveTest.theHostWindowReadsRealPixelsFromTheHostSide` — the new live gate, and the
+  assumption Studio's overlay editor rests on. The existing test proves a session can capture *itself* while
+  minimized; this proves the *host* can capture the session's window, which is a different question under
+  gamescope (frames go through its own Vulkan swapchain, and a host capture returning black would mean the
+  overlay draws over a window it cannot see into). Passes on both backends; skips by default like its siblings.
+
+**Deferred / next**
+
+- Phase 6 of the same batch is the latency work in this module: `reapOrphanSessions()` off the critical path,
+  `SessionReaper.systemdAvailable()` warmed at Studio startup, and `GamescopeDisplay.awaitDisplay`'s stderr
+  *file* polling replaced with a reader thread. The `START_TIMEOUT_MS`/`windowTimeoutFor` budgets stay as they
+  are — this is about latency, not patience.
+
+---
+
 ## 2026-08-01 — refactor Phase 4: B8, the reaper's own failure mode (SS6)
 
 This module's single Phase 4 unit. **80 → 82 tests**, and the first production change here since the

@@ -278,8 +278,12 @@ public final class NestedSession implements DesktopSession {
     /**
      * Stop hiding the host window — and, if the search hasn't finished yet, don't start. Idempotent:
      * {@link SessionHostWindow#reveal} only fires once, so the per-attach call site stays unconditional.
+     *
+     * <p>Public for the same reason as {@link #hostWindowId}: a host-side tool that wants to look at the session
+     * (Studio's overlay editor) has to be able to un-minimize it first, and calling it a second time after the
+     * session's own attach already did costs nothing.
      */
-    private void revealHostWindow() {
+    public void revealHostWindow() {
         revealRequested = true;
         SessionHostWindow window = hostWindow;
         if (window != null) {
@@ -552,6 +556,24 @@ public final class NestedSession implements DesktopSession {
         GenericWindow window = attached();
         Object handle = window == null ? null : window.getNativeHandle();
         return handle instanceof Pointer p ? Pointer.nativeValue(p) : 0;
+    }
+
+    /**
+     * The X id of the display server's <em>own</em> window on the host desktop, or {@code 0} while it isn't known.
+     *
+     * <p>Plumbing, not contract — but the one thing a host-side tool needs to point at a session. Studio's overlay
+     * editor captures this window to draw over a running gamescope session: gamescope passes {@code -W/-H} and
+     * {@code -w/-h} as the same size, so this window's pixels are 1:1 with what the bot sees on {@code :N} and its
+     * coordinates need no mapping. Matching it by <em>title</em> from the host side does not work — gamescope
+     * renames its output window after whatever app is running in it — which is why the id is published at all.
+     *
+     * <p>{@code 0} is a normal answer for the first seconds of a session, not an error: the window is found on the
+     * hider thread ({@link #hideUntilItHasSomethingToShow}), and gamescope does not map it until a client maps
+     * something on its Xwayland. A caller polls or falls back; it must not treat {@code 0} as failure.
+     */
+    public long hostWindowId() {
+        SessionHostWindow window = hostWindow;
+        return window == null ? 0 : window.windowId();
     }
 
     /** This session's reap-group id — for diagnostics and tests. */
