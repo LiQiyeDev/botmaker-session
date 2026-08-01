@@ -7,12 +7,18 @@ import com.botmaker.session.process.SessionReaper;
 
 import com.botmaker.shared.Diag;
 
-import java.io.File;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.lang.ProcessBuilder.Redirect;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,7 +34,8 @@ import java.util.regex.Pattern;
  * only for a child it launches, and otherwise announces its embedded Xwayland on <em>stderr</em>
  * ({@code Starting Xwayland on :N}). We run gamescope in its standalone-compositor form (no {@code --} child —
  * the SteamOS session model, where gamescope hosts an Xwayland that apps connect to with {@code DISPLAY=:N}),
- * capture that stderr, and {@link #parseDisplayNumber parse the number} back out. That keeps
+ * read that stderr line by line on a {@link StderrWatcher} thread, and {@link #parseDisplayNumber parse the
+ * number} back out of the banner as it arrives rather than polling for it. That keeps
  * {@link NestedSession}'s "start the display, then launch the game into it" flow identical to the Xephyr path.
  * Readiness is still gated on a real {@link DisplayReadiness#awaitConnectable}, never a {@code sleep}.
  *
@@ -44,7 +51,14 @@ public final class GamescopeDisplay implements SessionDisplay {
 
     /** How long to wait for gamescope to announce its Xwayland display, then for that display to accept a connection. */
     private static final long START_TIMEOUT_MS = 15_000;
-    private static final long POLL_MS = 150;
+
+    /**
+     * How many recent stderr lines to keep for a failure message. gamescope's reason for not coming up (no DRM
+     * master, no Vulkan device, an argv it doesn't understand) is on stderr and used to be dropped on the floor:
+     * the banner was parsed out of a temp file that nothing ever read back. A bounded tail costs nothing and is
+     * the difference between "did not announce a display" and knowing why.
+     */
+    private static final int KEPT_STDERR_LINES = 40;
 
     /** gamescope's stderr banner for its embedded server, e.g. {@code wlserver: Starting Xwayland on :1}. */
     private static final Pattern XWAYLAND_ON = Pattern.compile("(?i)xwayland on (:\\d+)");
@@ -127,38 +141,120 @@ public final class GamescopeDisplay implements SessionDisplay {
      */
     public static GamescopeDisplay start(SessionReaper reaper, List<String> command, int width, int height)
             throws SessionStartException {
-        File err;
         Process server;
         try {
-            err = SessionReaper.tempOutputFile("botmaker-gamescope-");
-            // gamescope announces its Xwayland on stderr; capture it (stdout stays discarded).
-            server = reaper.launch("gamescope", command, Map.of(), Redirect.DISCARD, Redirect.appendTo(err));
+            // gamescope announces its Xwayland on stderr; pipe it to a reader (stdout stays discarded).
+            server = reaper.launch("gamescope", command, Map.of(), Redirect.DISCARD, Redirect.PIPE);
         } catch (Exception e) {
             throw new SessionStartException("could not launch gamescope (is it installed?): " + e.getMessage(), e);
         }
 
-        String display = awaitDisplay(err, server);
+        StderrWatcher stderr = StderrWatcher.watch(server);
+        long spawned = System.currentTimeMillis();
+        String display = awaitDisplay(stderr, server);
+        long announced = System.currentTimeMillis();
         DisplayReadiness.awaitConnectable(display, server, START_TIMEOUT_MS);
-        Diag.log("[Session] nested gamescope display " + display + " up (" + width + "x" + height + ")");
+        // Split because the two halves have entirely different owners: the first is gamescope's own bring-up and
+        // nothing here can shorten it, the second is ours to poll for. Whenever a session start feels slow, this
+        // line says which of the two to go and look at.
+        Diag.log("[Session] nested gamescope display " + display + " up (" + width + "x" + height + ") — announced "
+            + (announced - spawned) + "ms after spawn, connectable " + (System.currentTimeMillis() - announced)
+            + "ms later");
         return new GamescopeDisplay(display, width, height, server);
     }
 
-    /** Poll gamescope's stderr file until its {@code Starting Xwayland on :N} banner appears, or time out / it dies. */
-    private static String awaitDisplay(File err, Process server) throws SessionStartException {
-        long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
-        while (System.currentTimeMillis() < deadline) {
-            String display = parseDisplayNumber(readAll(err));
-            if (display != null) {
-                return display;
-            }
-            if (!server.isAlive()) {
-                throw new SessionStartException("gamescope exited before announcing an Xwayland display "
-                    + "(exit " + server.exitValue() + ") — check that it can start a nested compositor here");
-            }
-            sleep();
+    /**
+     * Wait for the {@code Starting Xwayland on :N} banner the reader thread is watching for, or fail when
+     * gamescope dies or the budget runs out.
+     *
+     * <p>Waiting on the stream rather than polling a file is worth the reader thread: the banner is acted on the
+     * moment gamescope writes it instead of up to a poll interval later, and that interval sat on the critical
+     * path of every session bring-up. It also means a launch that fails can quote what gamescope said.
+     */
+    private static String awaitDisplay(StderrWatcher stderr, Process server) throws SessionStartException {
+        try {
+            return stderr.display().get(START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            throw new SessionStartException("gamescope did not announce an Xwayland display within "
+                + START_TIMEOUT_MS + "ms" + stderr.tail());
+        } catch (ExecutionException e) {
+            throw new SessionStartException("gamescope exited before announcing an Xwayland display (exit "
+                + (server.isAlive() ? "?" : server.exitValue()) + ") — check that it can start a nested "
+                + "compositor here" + stderr.tail());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SessionStartException("interrupted while waiting for gamescope to announce a display", e);
         }
-        throw new SessionStartException("gamescope did not announce an Xwayland display within "
-            + START_TIMEOUT_MS + "ms");
+    }
+
+    /**
+     * Drains gamescope's stderr for the whole life of the process, completing {@link #display()} on the Xwayland
+     * banner and keeping the last {@link #KEPT_STDERR_LINES} lines for a failure message.
+     *
+     * <p><b>The draining is not optional.</b> A piped stream nobody reads fills its pipe buffer and then blocks
+     * the writer — so a reader that stopped at the banner would hang gamescope a few thousand log lines into a
+     * session. That is why this outlives the bring-up it exists for, on a daemon thread that ends at EOF.
+     */
+    private static final class StderrWatcher implements Runnable {
+
+        private final Process server;
+        private final CompletableFuture<String> display = new CompletableFuture<>();
+        /** Guarded by itself — written by the reader thread, read by whoever is building a failure message. */
+        private final Deque<String> recent = new ArrayDeque<>();
+
+        private StderrWatcher(Process server) {
+            this.server = server;
+        }
+
+        static StderrWatcher watch(Process server) {
+            StderrWatcher watcher = new StderrWatcher(server);
+            Thread t = new Thread(watcher, "gamescope-stderr-" + server.pid());
+            t.setDaemon(true);
+            t.start();
+            // Belt and braces for the one case EOF doesn't cover: a grandchild holding the stderr fd open past
+            // gamescope's own exit would otherwise leave the wait to time out instead of failing fast.
+            server.onExit().thenRun(() -> watcher.display.completeExceptionally(
+                new IllegalStateException("gamescope exited")));
+            return watcher;
+        }
+
+        CompletableFuture<String> display() {
+            return display;
+        }
+
+        /** The kept stderr tail, formatted for a failure message, or empty when gamescope said nothing at all. */
+        String tail() {
+            List<String> lines;
+            synchronized (recent) {
+                lines = List.copyOf(recent);
+            }
+            return lines.isEmpty() ? "" : "; gamescope said:\n" + String.join("\n", lines);
+        }
+
+        @Override
+        public void run() {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(server.getErrorStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    synchronized (recent) {
+                        recent.addLast(line);
+                        if (recent.size() > KEPT_STDERR_LINES) {
+                            recent.removeFirst();
+                        }
+                    }
+                    if (!display.isDone()) {
+                        String announced = parseDisplayNumber(line);
+                        if (announced != null) {
+                            display.complete(announced);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // The stream went away; the completion below turns that into the same failure as an exit.
+            }
+            display.completeExceptionally(new IllegalStateException("gamescope's stderr ended"));
+        }
     }
 
     /**
@@ -174,19 +270,4 @@ public final class GamescopeDisplay implements SessionDisplay {
         return m.find() ? m.group(1) : null;
     }
 
-    private static String readAll(File f) {
-        try {
-            return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private static void sleep() {
-        try {
-            Thread.sleep(POLL_MS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

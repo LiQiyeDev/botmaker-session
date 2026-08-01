@@ -16,6 +16,51 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-01 — improvements Phase 6: getting the housekeeping off the session-start critical path
+
+**Done**
+
+- **The orphan sweep runs concurrently with the bring-up** instead of in front of it. `NestedSession.start`
+  opened with a synchronous `reapOrphanSessions()` — a `systemctl list-units` plus a `systemctl stop` per
+  leftover slice, each with a 5s budget — before it spawned anything, for work Studio already does at startup.
+  It now starts on a daemon thread beside `startDisplay`.
+- **That required claiming the session id earlier.** `LIVE.add(id)` used to happen once the tree was up; a
+  sweep running concurrently would have seen the new slice as an unclaimed cgroup owned by this pid, which is
+  precisely its definition of an orphan, and stopped the session being built. The claim moved to the top of
+  `start` and is dropped in `cleanupFailedStart`. Verified the way it matters: a `kill -9`'d session-owning
+  JVM's two slices were still reaped by the next launch, and that launch's own slice survived.
+- **gamescope's stderr is read, not polled.** `GamescopeDisplay` wrote stderr to a temp file and re-read the
+  whole file every 150ms looking for the `Starting Xwayland on :N` banner. A `StderrWatcher` daemon thread now
+  reads the piped stream line by line and completes a future the moment the banner arrives. It keeps draining
+  for the life of the process — a piped stream nobody reads fills its buffer and blocks the writer — and keeps
+  the last 40 lines, so a bring-up that fails can finally quote what gamescope said instead of just "did not
+  announce a display".
+- **`DisplayReadiness` polls at 25ms, not 100ms.** Measured on this box, gamescope's Xwayland becomes
+  connectable 114–164ms after the banner, so the old interval rounded that up to 200ms.
+- `SessionReaper.systemdAvailable()` is `synchronized`, so the probe runs once rather than typically-once —
+  with the sweep now concurrent with a start, two callers arriving together is the normal case.
+- New diagnostic: the "display up" line splits the wait into *announced Xms after spawn, connectable Yms
+  later*. The two halves have different owners (gamescope's own bring-up vs. our poll), and the line says
+  which one to go and look at.
+
+**Measured, and the honest version of it**
+
+Warm gamescope `start()` on the dev box is **~390–540ms**, of which ~220–370ms is gamescope announcing its
+Xwayland and ~115–165ms is that Xwayland accepting a connection — i.e. **the floor here is gamescope's own
+bring-up**, and the phase's savings (the serialized sweep, up to 75ms of poll granularity) are real but sit
+inside the run-to-run variance of a single measurement. Two of the plan's predicted costs did **not**
+materialize on this machine: `systemd-run --user --scope true` returns in **19ms**, not the 4s its `waitFor`
+budget allows, and a `systemctl stop` of a leftover slice costs ~50–100ms rather than seconds. The changes
+are still right — they are worth the most exactly on the slow-systemd box where the budgets were chosen —
+but nobody should expect a visible speed-up here.
+
+**Deferred / next**
+
+- The ~50ms private D-Bus start and gamescope's own ~250ms are what is left; neither is ours to shorten.
+- The 20s/120s `windowTimeoutFor` budgets still dominate a *failing* launch and were deliberately excluded.
+
+---
+
 ## 2026-08-01 — improvements Phase 5: publishing the host window so Studio can overlay a session
 
 **Done**

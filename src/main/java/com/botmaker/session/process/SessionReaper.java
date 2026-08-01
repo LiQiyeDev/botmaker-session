@@ -252,8 +252,13 @@ public final class SessionReaper {
      * Probe once whether {@code systemd-run --user --scope} actually works here (a user systemd, a session bus,
      * {@code XDG_RUNTIME_DIR}). Cached because the probe spawns a process and the answer can't change within a
      * JVM's lifetime.
+     *
+     * <p>{@code synchronized} so "once" is literal rather than typical. The double-check on a plain volatile let
+     * two callers arriving together each spawn the probe and pay its {@code waitFor}, and since the orphan sweep
+     * now runs concurrently with a session start, two callers arriving together is the normal case rather than a
+     * rare interleaving. The lock is only ever contended on the first call.
      */
-    private static boolean systemdAvailable() {
+    private static synchronized boolean systemdAvailable() {
         Boolean cached = systemdAvailable;
         if (cached != null) {
             return cached;

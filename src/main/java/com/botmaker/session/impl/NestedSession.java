@@ -75,6 +75,9 @@ public final class NestedSession implements DesktopSession {
      * cgroup of ours from a live one: "owner pid is alive" used to be enough to spare a slice, which spared the
      * shells of sessions this JVM had already let go of — a private {@code dbus-daemon} was found still running in
      * one whose display server had been gone for hours, and the launch probes counted it as a launcher that was up.
+     *
+     * <p>An id is claimed at the <em>top</em> of {@link #start}, before its cgroup exists, and dropped again if the
+     * start fails — the sweep runs concurrently with a bring-up, so "held" has to include "being built".
      */
     private static final Set<String> LIVE = ConcurrentHashMap.newKeySet();
 
@@ -165,11 +168,18 @@ public final class NestedSession implements DesktopSession {
      * cleanly fall back to a {@link HostSession}.
      */
     public static NestedSession start(Options options) throws SessionStartException {
-        // Sweep any trees left by a previously-SIGKILLed JVM before starting a fresh one (systemd strategy only).
-        reapOrphanSessions();
         // Id shape s<pid>-<seq> is a contract: the orphan sweep parses the owner pid back out of the slice name.
         String id = "s" + ProcessHandle.current().pid() + "-" + SEQ.incrementAndGet();
+        // Claimed here rather than after the tree is up, because the sweep below runs *concurrently* with the
+        // bring-up: from its point of view an unclaimed slice owned by this pid is an abandoned one, and it would
+        // stop the session being built right now. The claim is dropped again on a failed start.
+        LIVE.add(id);
         SessionReaper reaper = new SessionReaper(id);
+        // Sweep the trees a previously-SIGKILLed JVM left behind (systemd strategy only) — off the critical path.
+        // It used to run first and synchronously, which put a `systemctl list-units` plus a 5s-budgeted
+        // `systemctl stop` per orphan in front of every launch, for work Studio already does at startup. It
+        // touches only slices this start doesn't own, so there is nothing for it to serialise against.
+        sweepOrphansConcurrently();
         SessionDisplay display = null;
         LinuxController controller = null;
         Pointer ewmh = null;
@@ -193,19 +203,27 @@ public final class NestedSession implements DesktopSession {
                 throw new SessionStartException("could not open a second connection to " + display.displayName());
             }
             NestedSession session = new NestedSession(id, reaper, display, controller, ewmh, options, bus);
-            // Registered only once the tree is actually up: a half-built session is cleaned up below, and the sweep
-            // must be free to collect anything it left behind.
-            LIVE.add(id);
             session.startWindowManager();
             session.hideUntilItHasSomethingToShow();
             return session;
         } catch (SessionStartException e) {
-            cleanupFailedStart(reaper, controller, ewmh, bus);
+            cleanupFailedStart(id, reaper, controller, ewmh, bus);
             throw e;
         } catch (Exception e) {
-            cleanupFailedStart(reaper, controller, ewmh, bus);
+            cleanupFailedStart(id, reaper, controller, ewmh, bus);
             throw new SessionStartException("nested session start failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Run {@link #reapOrphanSessions()} on a daemon thread. The sweep is only ever best-effort housekeeping —
+     * nothing about this session's bring-up depends on its result — so nobody waits for it, and a JVM that exits
+     * mid-sweep is not held open by it.
+     */
+    private static void sweepOrphansConcurrently() {
+        Thread sweep = new Thread(NestedSession::reapOrphanSessions, "session-orphan-sweep");
+        sweep.setDaemon(true);
+        sweep.start();
     }
 
     /** Bring up the display server the options ask for: Xephyr (2D) or gamescope (hardware 3D). */
@@ -217,9 +235,14 @@ public final class NestedSession implements DesktopSession {
         };
     }
 
-    /** Reap a half-built session's resources in the reverse order they were acquired. */
-    private static void cleanupFailedStart(SessionReaper reaper, LinuxController controller, Pointer ewmh,
-                                           SessionBus bus) {
+    /**
+     * Reap a half-built session's resources in the reverse order they were acquired, and drop the {@link #LIVE}
+     * claim {@link #start} took before it — a session that never came up must not go on sheltering its own slice
+     * from the sweep.
+     */
+    private static void cleanupFailedStart(String id, SessionReaper reaper, LinuxController controller,
+                                           Pointer ewmh, SessionBus bus) {
+        LIVE.remove(id);
         if (bus != null) {
             try { bus.close(); } catch (Throwable ignored) { }
         }
@@ -605,7 +628,8 @@ public final class NestedSession implements DesktopSession {
      * died — the reliable answer to "a bot crashed and left a Xephyr running". Call it at startup (a
      * supervisor/Studio boot) and before deciding whether a launch can be isolated: a leftover is read as a
      * running launcher by the launch probes, so sweeping late means refusing a launch on a dead session's
-     * account. {@link #start} runs it before each new session too. No-op where there is no user systemd.
+     * account. {@link #start} runs it alongside each new session too — concurrently, since it is housekeeping and
+     * not a precondition. No-op where there is no user systemd.
      */
     public static void reapOrphanSessions() {
         SessionReaper.reapOrphans(LIVE);

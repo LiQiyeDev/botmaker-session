@@ -13,7 +13,14 @@ import com.sun.jna.Pointer;
  */
 public final class DisplayReadiness {
 
-    private static final long POLL_MS = 100;
+    /**
+     * Retry interval. Short on purpose: this poll sits on the critical path of every session bring-up, and the
+     * server typically becomes connectable within one or two intervals of being asked — so the interval, not the
+     * server, is what the user waits for. An {@code XOpenDisplay} against a socket nobody is listening on fails
+     * immediately and costs a connect attempt, which is cheap enough to pay 40 times a second for a second or
+     * two. The timeout is the patience budget; this is only the granularity.
+     */
+    private static final long POLL_MS = 25;
 
     private DisplayReadiness() {}
 
