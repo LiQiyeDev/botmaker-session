@@ -1,0 +1,93 @@
+name: CI
+
+# One workflow per repo. `build` runs on every push and PR; `live` is the nested-session suite, kept but
+# moved off the push path (see below). They were separate files (build.yml + session-live.yml) purely
+# because their triggers differ, which a job-level `if:` expresses just as well.
+#
+# Tests are deliberately NOT run in `build` (`-DskipTests`): CI is a compile gate, and the suite is run
+# locally. -DskipTests still *compiles* the tests, so test code that no longer builds is still caught.
+#
+# botmaker-shared is resolved from source, not from JitPack. This repo's pom pins
+# ${botmaker.shared.version} = 0.0.0-SNAPSHOT — the version the umbrella reactor and a local
+# `mvn install` produce — so there is no published artifact under that coordinate to download.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out botmaker-shared
+        uses: actions/checkout@v4
+        with:
+          repository: LiQiyeDev/botmaker-shared
+          path: .deps/botmaker-shared
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install botmaker-shared (0.0.0-SNAPSHOT)
+        run: mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
+
+      - name: Build
+        run: mvn -B -DskipTests package
+
+  # The nested-session supervisor proven end-to-end, headlessly: Xvfb is the host X server, our Xephyr :N
+  # nests inside it, so the same live NestedSessionLiveTest a maintainer runs on their desktop runs
+  # unattended here. GitHub runners have no per-user systemd/session bus, so SessionReaper takes its
+  # ProcessBuilder descendant-kill fallback (the systemd --scope path is exercised on the real box) —
+  # either way the test asserts zero orphan Xephyr.
+  #
+  # **Run it from the Actions tab** (Run workflow). It is the one test job kept in CI because it proves
+  # something no local run of `mvn test` does — a clean-room machine with no session bus — but it is off
+  # the push path with the rest of the suite, so it costs a deliberate click rather than every commit.
+  live:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out botmaker-shared
+        uses: actions/checkout@v4
+        with:
+          repository: LiQiyeDev/botmaker-shared
+          path: .deps/botmaker-shared
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install botmaker-shared (0.0.0-SNAPSHOT)
+        run: mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
+
+      - name: Install the nested-display stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xserver-xephyr openbox \
+            x11-utils x11-xserver-utils x11-apps xterm xdotool xauth
+
+      - name: Run the live session suite under Xvfb
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            mvn -B test \
+              -Dtest=NestedSessionLiveTest \
+              -Dbotmaker.live=true \
+              -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
