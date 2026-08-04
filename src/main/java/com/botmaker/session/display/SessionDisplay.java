@@ -44,4 +44,16 @@ public interface SessionDisplay {
      * gamescope carries hardware GL/Vulkan. Drives {@link Capability#HARDWARE_GL}/{@link Capability#VULKAN}.
      */
     public boolean hardwareAccelerated();
+
+    /**
+     * The Wayland socket this display hosts for native Wayland clients, e.g. {@code "gamescope-0"} — or
+     * {@code null} when it hosts none, which is the default and is true of every X server backend.
+     *
+     * <p>Drives {@link Capability#WAYLAND_CLIENTS} and, when non-null, becomes the child environment's
+     * {@code WAYLAND_DISPLAY} instead of the blank that otherwise forces clients onto the private X display.
+     * Only a compositor backend can answer this; {@link NestedDisplay} is an X server and never does.
+     */
+    default String waylandDisplay() {
+        return null;
+    }
 }

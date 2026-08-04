@@ -358,6 +358,11 @@ public final class NestedSession implements DesktopSession {
             caps.add(Capability.HARDWARE_GL);
             caps.add(Capability.VULKAN);
         }
+        if (display.waylandDisplay() != null) {
+            // Only a compositor backend answers this — gamescope with --expose-wayland. It is what lets a
+            // Wayland-only client (Waydroid's show-full-ui) run in a session at all.
+            caps.add(Capability.WAYLAND_CLIENTS);
+        }
         return caps;
     }
 
@@ -646,9 +651,15 @@ public final class NestedSession implements DesktopSession {
             // through the portal lands back on :N instead of the host's :0. See SessionBus for the measurements.
             env.put("DBUS_SESSION_BUS_ADDRESS", bus.address());
         }
-        // A Wayland-capable client offered both will usually prefer Wayland — and the host compositor is exactly
-        // what this session exists to stay out of. Blanking it forces the private X display.
-        env.put("WAYLAND_DISPLAY", "");
+        // A Wayland-capable client offered both will usually prefer Wayland — and the *host* compositor is
+        // exactly what this session exists to stay out of. Blanking it forces the private X display.
+        //
+        // Unless the display hosts a compositor of its own (gamescope --expose-wayland), in which case handing
+        // over *that* socket keeps the client inside the session just as effectively, and is the only way a
+        // Wayland-only client can run here at all — blanking it leaves Waydroid's show-full-ui with nothing to
+        // connect to. See Capability.WAYLAND_CLIENTS.
+        String wayland = display.waylandDisplay();
+        env.put("WAYLAND_DISPLAY", wayland == null ? "" : wayland);
         env.putAll(options.extraEnv());
         return env;
     }

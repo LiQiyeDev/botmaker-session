@@ -3,6 +3,7 @@ package com.botmaker.session.impl;
 import com.botmaker.session.display.GamescopeDisplay;
 import com.botmaker.session.display.NestedDisplay;
 import com.botmaker.session.display.SessionBackends;
+import com.botmaker.session.display.SessionDisplay;
 
 import com.botmaker.shared.launch.LaunchCommands;
 import com.botmaker.shared.launch.LaunchSpec;
@@ -128,9 +129,10 @@ class NestedSessionTest {
         assertEquals(NestedSession.Backend.GAMESCOPE, gs.backend());
         // Default gamescope argv is standalone (no "--" child) and carries the requested size twice: the output
         // window (-W/-H) and the internal resolution apps see (-w/-h), so capture is 1:1 with the templates.
-        // --force-windows-fullscreen makes the game fill the display the click coordinates are computed against.
+        // --force-windows-fullscreen makes the game fill the display the click coordinates are computed against;
+        // --expose-wayland lets the session host a Wayland-only client (Waydroid) that has no X11 path at all.
         assertEquals(List.of("gamescope", "-W", "1920", "-H", "1080", "-w", "1920", "-h", "1080",
-                "--force-windows-fullscreen"),
+                "--force-windows-fullscreen", "--expose-wayland"),
             gs.displayServerCommand());
         assertTrue(gs.displayServerCommand().stream().noneMatch("--"::equals));
 
@@ -151,5 +153,36 @@ class NestedSessionTest {
         assertNull(GamescopeDisplay.parseDisplayNumber(""));
         assertNull(GamescopeDisplay.parseDisplayNumber(null));
         assertNull(GamescopeDisplay.parseDisplayNumber("gamescope: creating nested compositor\n"));
+    }
+
+    @Test
+    void gamescopeWaylandSocketParsedFromItsOwnBanner() {
+        // The --expose-wayland socket. It is a *different* banner from the Xwayland one and the two must not
+        // be confused: handing ":1" to a Wayland client as WAYLAND_DISPLAY would leave it unable to connect
+        // while looking configured.
+        assertEquals("gamescope-0", GamescopeDisplay.parseWaylandDisplay(
+            "wlserver: [wlserver.cpp:1699] Running compositor on wayland display 'gamescope-0'"));
+        assertEquals("gamescope-1", GamescopeDisplay.parseWaylandDisplay(
+            "Running compositor on wayland display 'gamescope-1'"));
+        assertNull(GamescopeDisplay.parseWaylandDisplay(
+            "wlserver: [xwayland/server.c:1146] Starting Xwayland on :1"));
+        assertNull(GamescopeDisplay.parseWaylandDisplay(""));
+        assertNull(GamescopeDisplay.parseWaylandDisplay(null));
+    }
+
+    @Test
+    void anXServerBackendHostsNoWaylandClients() {
+        // The default on the seam, so a backend that is not a compositor cannot accidentally advertise
+        // WAYLAND_CLIENTS — and NestedSession keeps blanking WAYLAND_DISPLAY for it, which is what forces a
+        // dual-stack client onto the private X display instead of the user's real desktop.
+        SessionDisplay xServer = new SessionDisplay() {
+            @Override public String displayName() { return ":9"; }
+            @Override public int width() { return 1280; }
+            @Override public int height() { return 720; }
+            @Override public boolean alive() { return true; }
+            @Override public long serverPid() { return 1; }
+            @Override public boolean hardwareAccelerated() { return false; }
+        };
+        assertNull(xServer.waylandDisplay());
     }
 }

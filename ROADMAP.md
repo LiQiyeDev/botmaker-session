@@ -16,6 +16,39 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-04 — a session can host native Wayland clients
+
+**85 tests (+2).** Changed: `Capability.java`, `display/SessionDisplay.java`, `display/GamescopeDisplay.java`,
+`impl/NestedSession.java`, `impl/NestedSessionTest.java`. Improvements plan phase 6, session half.
+
+### Done
+
+- **`Capability.WAYLAND_CLIENTS`.** Every nested session hands children a private `DISPLAY=:N` and blanks
+  `WAYLAND_DISPLAY`, because a dual-stack client offered both usually picks Wayland — the *host* compositor,
+  which is exactly what a private session exists to stay out of. That is right for a game and wrong for a
+  client with no X11 path at all: Waydroid's `show-full-ui` is Wayland-only, and blanking the variable leaves
+  it with nothing to connect to.
+- **`SessionDisplay.waylandDisplay()`**, defaulting to `null` on the seam so an X server backend cannot
+  accidentally advertise the capability. `GamescopeDisplay` answers it by parsing gamescope's
+  `Running compositor on wayland display 'gamescope-0'` banner — a *different* banner from the Xwayland one,
+  and confusing the two would hand a Wayland client `":1"` as its socket: unable to connect while looking
+  configured. Read live off the stderr watcher rather than snapshotted at construction, because bring-up
+  completes on the Xwayland banner and nothing in gamescope's output promises the two arrive in that order.
+- **`--expose-wayland` is now in `GamescopeDisplay.defaultCommand`**, and `NestedSession.sessionEnv()` puts
+  gamescope's own socket in `WAYLAND_DISPLAY` when the backend declares one, blanking it otherwise. Handing
+  over the *session's* compositor keeps the client inside the session just as effectively as blanking did.
+
+### Deferred / next
+
+- **Capturing the gamescope output window instead of `adb screencap`.** gamescope composites its native
+  Wayland clients into its own X output window, so `SessionHostWindow` + shared's X11 `captureWindow` could
+  replace the ADB capture path entirely at a much higher framerate, keeping ADB only for `input tap`. Note
+  `--backend headless` is incompatible with it — there is no output window to grab. This is the *same*
+  mechanism as the host-window capture deferred for the Windows emulators in
+  `../botmaker-shared/ROADMAP.md`; one backend should serve both rather than being written twice.
+
+---
+
 ## 2026-08-01 — improvements Phase 6: getting the housekeeping off the session-start critical path
 
 **Done**

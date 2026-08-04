@@ -38,6 +38,21 @@ public enum Capability {
     /** A working Vulkan device is available in the session. */
     VULKAN,
 
+    /**
+     * The session hosts <b>native Wayland</b> clients, not only X11 ones.
+     *
+     * <p>Every nested session gives its children a private {@code DISPLAY=:N} and blanks {@code WAYLAND_DISPLAY},
+     * because a dual-stack client offered both would usually pick Wayland — the host compositor, which is
+     * precisely what a private session exists to stay out of. That is right for a game and wrong for a client
+     * with no X11 path at all: Waydroid's {@code show-full-ui} is Wayland-only, so on an X11 desktop it cannot
+     * start anywhere except inside a compositor of its own.
+     *
+     * <p>gamescope is one ({@code --expose-wayland}), so a gamescope-backed session can advertise this and keep
+     * its own Wayland socket in the child environment instead of blanking it. Xephyr is an X server and never
+     * offers it.
+     */
+    WAYLAND_CLIENTS,
+
     /** The session can produce a pixel frame of its target ({@link DesktopSession#capture()}). */
     SCREEN_CAPTURE,
 

@@ -63,16 +63,25 @@ public final class GamescopeDisplay implements SessionDisplay {
     /** gamescope's stderr banner for its embedded server, e.g. {@code wlserver: Starting Xwayland on :1}. */
     private static final Pattern XWAYLAND_ON = Pattern.compile("(?i)xwayland on (:\\d+)");
 
+    /**
+     * gamescope's banner for the Wayland socket {@code --expose-wayland} serves, e.g.
+     * {@code wlserver: Running compositor on wayland display 'gamescope-0'}.
+     */
+    private static final Pattern WAYLAND_ON = Pattern.compile("(?i)on wayland display '([^']+)'");
+
     private final String displayName;
     private final int width;
     private final int height;
     private final Process server;
+    /** Kept live rather than snapshotted: the two banners have no guaranteed order (see {@link #waylandDisplay}). */
+    private final StderrWatcher stderr;
 
-    private GamescopeDisplay(String displayName, int width, int height, Process server) {
+    private GamescopeDisplay(String displayName, int width, int height, Process server, StderrWatcher stderr) {
         this.displayName = displayName;
         this.width = width;
         this.height = height;
         this.server = server;
+        this.stderr = stderr;
     }
 
     @Override
@@ -106,6 +115,20 @@ public final class GamescopeDisplay implements SessionDisplay {
     }
 
     /**
+     * The {@code --expose-wayland} socket, e.g. {@code gamescope-0}, or {@code null} if gamescope hasn't
+     * announced one (an older build, or an argv that dropped the flag).
+     *
+     * <p>Read from the watcher on each call rather than captured at construction: bring-up completes on the
+     * <em>Xwayland</em> banner, and while gamescope in practice announces its Wayland socket first (the
+     * compositor is up before it starts an Xwayland on top of it), nothing in its output contract promises
+     * that order. Reading live costs a volatile load and removes the race entirely.
+     */
+    @Override
+    public String waylandDisplay() {
+        return stderr.waylandDisplay();
+    }
+
+    /**
      * The default standalone gamescope argv for a {@code width}x{@code height} host (no {@code --} child).
      *
      * <p>{@code -W/-H} are the output (the nested window on the real desktop) and {@code -w/-h} the internal
@@ -113,6 +136,11 @@ public final class GamescopeDisplay implements SessionDisplay {
      * its templates were made at — no upscaler in between. {@code --force-windows-fullscreen} makes the game
      * fill the display rather than open some default-sized window in a corner of it, which is what the capture
      * and the click coordinates assume.
+     *
+     * <p>{@code --expose-wayland} makes gamescope serve native Wayland clients over an {@code xdg-shell} socket
+     * alongside its Xwayland, at no cost to X11 clients. It is on by default because the alternative is a
+     * session that silently cannot host one: Waydroid's {@code show-full-ui} has no X11 path at all, and on an
+     * X11 desktop a compositor of its own is the only place it can run. See {@link Capability#WAYLAND_CLIENTS}.
      *
      * <p>The nested window is <b>visible</b> on purpose: a background session you cannot look at is impossible
      * to debug, and seeing the bot play is half the point. It is not visible <em>immediately</em>, though:
@@ -129,7 +157,8 @@ public final class GamescopeDisplay implements SessionDisplay {
         String h = Integer.toString(height);
         // No child command, so gamescope stays up hosting its Xwayland for apps we launch afterwards with
         // DISPLAY=:N. A caller can override this whole argv via Options.
-        return List.of("gamescope", "-W", w, "-H", h, "-w", w, "-h", h, "--force-windows-fullscreen");
+        return List.of("gamescope", "-W", w, "-H", h, "-w", w, "-h", h,
+            "--force-windows-fullscreen", "--expose-wayland");
     }
 
     /**
@@ -160,7 +189,7 @@ public final class GamescopeDisplay implements SessionDisplay {
         Diag.log("[Session] nested gamescope display " + display + " up (" + width + "x" + height + ") — announced "
             + (announced - spawned) + "ms after spawn, connectable " + (System.currentTimeMillis() - announced)
             + "ms later");
-        return new GamescopeDisplay(display, width, height, server);
+        return new GamescopeDisplay(display, width, height, server, stderr);
     }
 
     /**
@@ -201,6 +230,12 @@ public final class GamescopeDisplay implements SessionDisplay {
         private final CompletableFuture<String> display = new CompletableFuture<>();
         /** Guarded by itself — written by the reader thread, read by whoever is building a failure message. */
         private final Deque<String> recent = new ArrayDeque<>();
+        /**
+         * The {@code --expose-wayland} socket name. Not a future like {@link #display}: nothing waits for it,
+         * because a session without one is merely a session that cannot host Wayland clients, not a failed
+         * start. Volatile for the reader-thread → caller handoff.
+         */
+        private volatile String waylandDisplay;
 
         private StderrWatcher(Process server) {
             this.server = server;
@@ -220,6 +255,11 @@ public final class GamescopeDisplay implements SessionDisplay {
 
         CompletableFuture<String> display() {
             return display;
+        }
+
+        /** The announced Wayland socket, or null if gamescope hasn't named one. */
+        String waylandDisplay() {
+            return waylandDisplay;
         }
 
         /** The kept stderr tail, formatted for a failure message, or empty when gamescope said nothing at all. */
@@ -249,6 +289,12 @@ public final class GamescopeDisplay implements SessionDisplay {
                             display.complete(announced);
                         }
                     }
+                    if (waylandDisplay == null) {
+                        String socket = parseWaylandDisplay(line);
+                        if (socket != null) {
+                            waylandDisplay = socket;
+                        }
+                    }
                 }
             } catch (Exception ignored) {
                 // The stream went away; the completion below turns that into the same failure as an exit.
@@ -267,6 +313,21 @@ public final class GamescopeDisplay implements SessionDisplay {
             return null;
         }
         Matcher m = XWAYLAND_ON.matcher(stderr);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * Extract the {@code --expose-wayland} socket name from gamescope's
+     * {@code Running compositor on wayland display 'gamescope-0'} banner, or {@code null} for any other line.
+     *
+     * <p>Matched on the quoted name rather than the whole sentence: the prefix differs between builds
+     * ({@code wlserver:}, a timestamp, nothing at all) and the socket name is the only part that is contract.
+     */
+    public static String parseWaylandDisplay(String stderr) {
+        if (stderr == null || stderr.isEmpty()) {
+            return null;
+        }
+        Matcher m = WAYLAND_ON.matcher(stderr);
         return m.find() ? m.group(1) : null;
     }
 
