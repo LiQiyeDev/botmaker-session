@@ -16,8 +16,10 @@ import com.botmaker.session.process.AppOutputLog;
 import com.botmaker.session.process.SessionBus;
 import com.botmaker.session.process.SessionMembers;
 import com.botmaker.session.process.SessionReaper;
+import com.botmaker.session.process.SessionUnit;
 
 import com.botmaker.shared.Diag;
+import com.botmaker.shared.Executables;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
 import com.botmaker.shared.capture.linux.LinuxController;
@@ -30,6 +32,7 @@ import com.botmaker.shared.launch.LaunchCommands;
 import com.botmaker.shared.launch.LaunchIsolation;
 import com.botmaker.shared.launch.LaunchSpec;
 import com.botmaker.shared.launch.Launcher;
+import com.botmaker.shared.platform.SessionEnv;
 import com.sun.jna.Pointer;
 
 import java.awt.Rectangle;
@@ -102,8 +105,6 @@ public final class NestedSession implements DesktopSession {
      * budget is a deadline and not a wait.
      */
     private static final long MEMBER_SHUTDOWN_MS = 20_000;
-    /** The reaper role the game is launched under — everything else in the group is session infrastructure. */
-    private static final String APP_ROLE = "app";
     /**
      * Set to {@code false} to leave the display server's host window visible for the whole bring-up (the old
      * behaviour). The escape hatch exists because minimizing it is a host-WM-mediated operation on a window we
@@ -201,7 +202,7 @@ public final class NestedSession implements DesktopSession {
             // The bus comes up *after* the display and is given it, because the whole point is that the Flatpak
             // portal this bus activates inherits the private DISPLAY — see SessionBus.
             bus = SessionBackends.usesPrivateBus(options)
-                ? SessionBus.start(reaper, id, Map.of("DISPLAY", display.displayName()))
+                ? SessionBus.start(reaper, id, Map.of(SessionEnv.DISPLAY, display.displayName()))
                 : null;
             // Pin XTest: on a private display device-level input is both accepted and non-intrusive, and the
             // process-wide botmaker.linux.input property (which steers :0) must not decide :N's backend. The
@@ -351,7 +352,7 @@ public final class NestedSession implements DesktopSession {
             return;
         }
         try {
-            reaper.launch("wm", wm, sessionEnv(), ProcessBuilder.Redirect.DISCARD);
+            reaper.launch(SessionUnit.WM, wm, sessionEnv(), ProcessBuilder.Redirect.DISCARD);
         } catch (Exception e) {
             Diag.error("[Session] " + id + ": window manager launch failed: " + e.getMessage());
             return;
@@ -480,7 +481,7 @@ public final class NestedSession implements DesktopSession {
             Process proc;
             try {
                 // Both streams, same file: which message preceded which is itself evidence.
-                proc = reaper.launch(APP_ROLE, command, sessionEnv(), sink, sink);
+                proc = reaper.launch(SessionUnit.APP, command, sessionEnv(), sink, sink);
             } catch (Exception e) {
                 Diag.error("[Session] " + id + ": launching `" + String.join(" ", command) + "` failed: "
                     + e.getMessage() + " — trying the next launch form");
@@ -589,7 +590,7 @@ public final class NestedSession implements DesktopSession {
      */
     private void shutdownMembers() {
         List<ProcessHandle> members = SessionMembers.of(display.displayName(),
-            bus == null ? null : bus.address(), reaper.unitNamesExcept(APP_ROLE));
+            bus == null ? null : bus.address(), reaper.unitNamesExcept(SessionUnit.APP));
         if (members.isEmpty()) {
             return;
         }
@@ -623,7 +624,7 @@ public final class NestedSession implements DesktopSession {
     private void awaitNoMembers(long deadline) {
         while (System.currentTimeMillis() < deadline) {
             List<ProcessHandle> stragglers = SessionMembers.of(display.displayName(),
-                bus == null ? null : bus.address(), reaper.unitNamesExcept(APP_ROLE));
+                bus == null ? null : bus.address(), reaper.unitNamesExcept(SessionUnit.APP));
             if (stragglers.isEmpty()) {
                 return;
             }
@@ -720,11 +721,11 @@ public final class NestedSession implements DesktopSession {
     /** The child environment every process launched into this session gets: its private DISPLAY, plus extras. */
     private Map<String, String> sessionEnv() {
         Map<String, String> env = new LinkedHashMap<>();
-        env.put("DISPLAY", display.displayName());
+        env.put(SessionEnv.DISPLAY, display.displayName());
         if (bus != null) {
             // The session's own bus — and with it its own Flatpak portal, so a launcher that re-spawns its game
             // through the portal lands back on :N instead of the host's :0. See SessionBus for the measurements.
-            env.put("DBUS_SESSION_BUS_ADDRESS", bus.address());
+            env.put(SessionEnv.DBUS_SESSION_BUS_ADDRESS, bus.address());
         }
         // A Wayland-capable client offered both will usually prefer Wayland — and the *host* compositor is
         // exactly what this session exists to stay out of. Blanking it forces the private X display.
@@ -734,7 +735,7 @@ public final class NestedSession implements DesktopSession {
         // Wayland-only client can run here at all — blanking it leaves Waydroid's show-full-ui with nothing to
         // connect to. See Capability.WAYLAND_CLIENTS.
         String wayland = display.waylandDisplay();
-        env.put("WAYLAND_DISPLAY", wayland == null ? "" : wayland);
+        env.put(SessionEnv.WAYLAND_DISPLAY, wayland == null ? "" : wayland);
         env.putAll(options.extraEnv());
         return env;
     }
@@ -868,9 +869,9 @@ public final class NestedSession implements DesktopSession {
     /** Which display server hosts the nested session — the 2D vs. hardware-3D choice. */
     public enum Backend {
         /** Xephyr: cheap 2D host, software-rendered here. */
-        XEPHYR("Xephyr"),
+        XEPHYR(Executables.XEPHYR),
         /** gamescope: embedded Xwayland on the real GPU — for Proton/DXVK/Vulkan 3D targets. */
-        GAMESCOPE("gamescope");
+        GAMESCOPE(Executables.GAMESCOPE);
 
         private final String binaryName;
 

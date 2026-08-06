@@ -1,6 +1,7 @@
 package com.botmaker.session.process;
 
 import com.botmaker.shared.Diag;
+import com.botmaker.shared.platform.SessionEnv;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -87,8 +88,9 @@ public final class SessionMembers {
      * @param infraUnits   systemd unit names whose members are session infrastructure, not payload
      */
     public static List<ProcessHandle> of(String displayName, String busAddress, Collection<String> infraUnits) {
-        String displayEnv = displayName == null ? null : "DISPLAY=" + displayName;
-        String busEnv = busAddress == null ? null : "DBUS_SESSION_BUS_ADDRESS=" + busAddress;
+        String displayEnv = displayName == null ? null : SessionEnv.assignment(SessionEnv.DISPLAY, displayName);
+        String busEnv = busAddress == null ? null
+            : SessionEnv.assignment(SessionEnv.DBUS_SESSION_BUS_ADDRESS, busAddress);
         if (displayEnv == null && busEnv == null) {
             return List.of();
         }

@@ -3,6 +3,8 @@ package com.botmaker.session.process;
 import com.botmaker.session.display.GamescopeDisplay;
 
 import com.botmaker.shared.Diag;
+import com.botmaker.shared.launch.ProcessOrigin;
+import com.botmaker.shared.platform.SessionEnv;
 
 import java.io.File;
 import java.io.IOException;
@@ -58,7 +60,7 @@ public final class SessionReaper {
     /** Guarded by {@link #lock}. */
     private final List<Process> launched = new ArrayList<>();
     /** The roles actually launched, so {@link #unitNamesExcept} names units that exist rather than a fixed list. */
-    private final Set<String> roles = ConcurrentHashMap.newKeySet();
+    private final Set<SessionUnit> roles = ConcurrentHashMap.newKeySet();
     /** Guarded by {@link #lock} for writes; read unguarded only for diagnostics. */
     private boolean reaped;
 
@@ -74,7 +76,7 @@ public final class SessionReaper {
      */
     SessionReaper(String sessionId, boolean useSystemd) {
         this.id = sanitize(sessionId);
-        this.slice = "botmaker-sess-" + id + ".slice";
+        this.slice = SessionUnit.sliceName(id);
         this.useSystemd = useSystemd;
         Diag.log("[Session] reaper for " + id + ": " + (useSystemd ? "systemd scope/slice " + slice
             : "process-tree (no user systemd)"));
@@ -91,17 +93,17 @@ public final class SessionReaper {
      * the private bus and the window manager alone while it terminates the payload. Empty under the no-systemd
      * fallback, where there are no units (and the payload is simply our own descendants).
      */
-    public Collection<String> unitNamesExcept(String role) {
+    public Collection<String> unitNamesExcept(SessionUnit role) {
         if (!useSystemd) {
             return List.of();
         }
-        return roles.stream().filter(r -> !r.equals(role)).map(r -> "botmaker-sess-" + id + "-" + r).toList();
+        return roles.stream().filter(r -> r != role).map(r -> r.unitName(id)).toList();
     }
 
     /**
      * Launch {@code command} (with {@code env} overlaid on the inherited environment) as a member of this
-     * session's reap group, sending its stdout to {@code stdout}. {@code role} names the transient unit for
-     * diagnosability (e.g. {@code "xephyr"}, {@code "wm"}, {@code "app"}).
+     * session's reap group, sending its stdout to {@code stdout}. {@code role} names the transient unit and is
+     * what {@link #unitNamesExcept} later sorts infrastructure from payload by.
      *
      * <p>Refused with {@link IllegalStateException} once {@link #reap()} has run — <em>including</em> when the reap
      * lands while this call is inside {@link ProcessBuilder#start()}: the just-started process is destroyed before
@@ -110,17 +112,19 @@ public final class SessionReaper {
      * @return the launched {@link Process} — the {@code systemd-run --scope} wrapper under the systemd
      *         strategy (whose lifetime tracks the payload's), or the payload itself under the fallback.
      */
-    public Process launch(String role, List<String> command, Map<String, String> env, Redirect stdout) throws IOException {
+    public Process launch(SessionUnit role, List<String> command, Map<String, String> env, Redirect stdout)
+            throws IOException {
         return launch(role, command, env, stdout, null);
     }
 
     /**
-     * As {@link #launch(String, List, Map, Redirect)}, but also redirecting the child's <em>stderr</em> to
+     * As {@link #launch(SessionUnit, List, Map, Redirect)}, but also redirecting the child's <em>stderr</em> to
      * {@code stderr} (defaulting to {@link Redirect#DISCARD} when {@code null}). Needed for a server that
      * reports its display number on stderr rather than a {@code -displayfd} stdout — gamescope does exactly
      * that (it logs {@code Starting Xwayland on :N}), so {@link GamescopeDisplay} captures stderr to parse it.
      */
-    public Process launch(String role, List<String> command, Map<String, String> env, Redirect stdout, Redirect stderr)
+    public Process launch(SessionUnit role, List<String> command, Map<String, String> env, Redirect stdout,
+                          Redirect stderr)
             throws IOException {
         synchronized (lock) {
             if (reaped) {
@@ -136,7 +140,7 @@ public final class SessionReaper {
             full.add("--scope");
             full.add("--quiet");
             full.add("--collect");                       // garbage-collect the unit once it exits
-            full.add("--unit=botmaker-sess-" + id + "-" + role);
+            full.add("--unit=" + role.unitName(id));
             full.add("--slice=" + slice);
             if (env != null) {
                 env.forEach((k, v) -> full.add("--setenv=" + k + "=" + v));
@@ -151,7 +155,7 @@ public final class SessionReaper {
         }
         pb.redirectOutput(stdout != null ? stdout : Redirect.DISCARD);
         pb.redirectError(stderr != null ? stderr : Redirect.DISCARD);
-        Diag.log("[Session] " + id + "/" + role + ": " + String.join(" ", useSystemd ? full : command));
+        Diag.log("[Session] " + id + "/" + role.role() + ": " + String.join(" ", useSystemd ? full : command));
         // Deliberately not under the lock: a spawn can block, and reap() must never wait behind one.
         Process p = pb.start();
         synchronized (lock) {
@@ -162,11 +166,11 @@ public final class SessionReaper {
         }
         // The reap landed while we were starting. The process exists and nothing tracks it, so this call — not
         // the teardown that already returned — is the only thing that can still kill it.
-        Diag.error("[Session] " + id + "/" + role + ": reaped mid-launch; destroying pid " + p.pid());
+        Diag.error("[Session] " + id + "/" + role.role() + ": reaped mid-launch; destroying pid " + p.pid());
         destroyTree(p);
         if (useSystemd) {
             // The scope joined the slice after the stop, so the slice teardown missed it.
-            stopUnit("botmaker-sess-" + id + "-" + role + ".scope");
+            stopUnit(role.scopeName(id));
         }
         throw new IllegalStateException("SessionReaper " + id + " already reaped");
     }
@@ -220,7 +224,7 @@ public final class SessionReaper {
      * launch is refused or skipped on its account.
      */
     private void verifyStopped() {
-        List<String> leftovers = listUnits("botmaker-sess-" + id + "*");
+        List<String> leftovers = listUnits(SessionUnit.unitGlob(id));
         if (leftovers.isEmpty()) {
             return;
         }
@@ -265,10 +269,10 @@ public final class SessionReaper {
         }
         boolean ok = false;
         try {
-            if (System.getenv("XDG_RUNTIME_DIR") != null) {
+            if (System.getenv(SessionEnv.XDG_RUNTIME_DIR) != null) {
                 Process p = new ProcessBuilder(
                     "systemd-run", "--user", "--scope", "--quiet",
-                    "--unit=botmaker-sess-probe-" + ProcessHandle.current().pid(), "true")
+                    "--unit=" + SessionUnit.probeUnitName(ProcessHandle.current().pid()), "true")
                     .redirectOutput(Redirect.DISCARD).redirectError(Redirect.DISCARD).start();
                 ok = p.waitFor(4, TimeUnit.SECONDS) && p.exitValue() == 0;
             }
@@ -287,7 +291,8 @@ public final class SessionReaper {
      * silently creates {@code botmaker-sess-s<pid>.slice} above it. Matching only the leaf left those parents
      * loaded-and-empty forever (six of them had accumulated by the end of one afternoon's live runs).
      */
-    private static final Pattern SESSION_SLICE = Pattern.compile("botmaker-sess-s(\\d+)(?:-\\d+)?\\.slice");
+    private static final Pattern SESSION_SLICE =
+        Pattern.compile(Pattern.quote(ProcessOrigin.SESSION_UNIT_PREFIX) + "s(\\d+)(?:-\\d+)?\\.slice");
 
     /**
      * Reap the leftovers of dead sessions: any {@code botmaker-sess-s<pid>-*.slice} whose owning JVM {@code pid}
@@ -340,12 +345,12 @@ public final class SessionReaper {
     /** The session id inside a slice name — {@code botmaker-sess-s123-4.slice} → {@code s123-4}. */
     public static String sessionIdOf(String slice) {
         String name = slice.endsWith(".slice") ? slice.substring(0, slice.length() - ".slice".length()) : slice;
-        return name.startsWith("botmaker-sess-") ? name.substring("botmaker-sess-".length()) : name;
+        return SessionUnit.stripPrefix(name);
     }
 
     /** The names of every {@code botmaker-sess-*} slice systemd currently knows, or empty on any failure. */
     private static List<String> listSessionSlices() {
-        return listUnits("botmaker-sess-*.slice").stream().filter(u -> u.endsWith(".slice")).toList();
+        return listUnits(SessionUnit.sliceGlob()).stream().filter(u -> u.endsWith(".slice")).toList();
     }
 
     /**
@@ -363,7 +368,7 @@ public final class SessionReaper {
             p.waitFor(5, TimeUnit.SECONDS);
             for (String line : out.split("\\R")) {
                 String name = line.trim().split("\\s+")[0];
-                if (name.startsWith("botmaker-sess-")) {
+                if (SessionUnit.isSessionUnit(name)) {
                     units.add(name);
                 }
             }

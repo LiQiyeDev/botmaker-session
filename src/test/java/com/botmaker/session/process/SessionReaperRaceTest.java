@@ -98,7 +98,7 @@ class SessionReaperRaceTest {
     @Test
     void fallbackReapKillsTheTrackedProcessAndItsDescendants() throws Exception {
         SessionReaper reaper = new SessionReaper("fallback-reap", false);
-        Process p = reaper.launch("app", SLEEPER_WITH_CHILD, Map.of(), Redirect.DISCARD);
+        Process p = reaper.launch(SessionUnit.APP, SLEEPER_WITH_CHILD, Map.of(), Redirect.DISCARD);
         List<ProcessHandle> children = waitForDescendants(p);
         assertFalse(children.isEmpty(), "the fixture must actually fork a child for this test to mean anything");
 
@@ -121,7 +121,7 @@ class SessionReaperRaceTest {
         reaper.reap();
 
         try {
-            Process leaked = reaper.launch("app", SLEEPER, Map.of(), Redirect.DISCARD);
+            Process leaked = reaper.launch(SessionUnit.APP, SLEEPER, Map.of(), Redirect.DISCARD);
             leaked.destroyForcibly();
             fail("launch() after reap() started a process nothing will ever reap");
         } catch (IllegalStateException expected) {
@@ -155,7 +155,7 @@ class SessionReaperRaceTest {
             Thread launcher = new Thread(() -> {
                 try {
                     go.await();
-                    launched.set(reaper.launch("app", SLEEPER, Map.of(), Redirect.DISCARD));
+                    launched.set(reaper.launch(SessionUnit.APP, SLEEPER, Map.of(), Redirect.DISCARD));
                 } catch (Throwable t) {
                     // An IllegalStateException here is the *correct* outcome: refused.
                 }

@@ -4,6 +4,7 @@ import com.botmaker.session.SessionStartException;
 import com.botmaker.session.impl.NestedSession;
 import com.botmaker.session.impl.SessionHostWindow;
 import com.botmaker.session.process.SessionReaper;
+import com.botmaker.session.process.SessionUnit;
 
 import com.botmaker.shared.Diag;
 
@@ -157,7 +158,7 @@ public final class GamescopeDisplay implements SessionDisplay {
         String h = Integer.toString(height);
         // No child command, so gamescope stays up hosting its Xwayland for apps we launch afterwards with
         // DISPLAY=:N. A caller can override this whole argv via Options.
-        return List.of("gamescope", "-W", w, "-H", h, "-w", w, "-h", h,
+        return List.of(NestedSession.Backend.GAMESCOPE.binaryName(), "-W", w, "-H", h, "-w", w, "-h", h,
             "--force-windows-fullscreen", "--expose-wayland");
     }
 
@@ -173,7 +174,7 @@ public final class GamescopeDisplay implements SessionDisplay {
         Process server;
         try {
             // gamescope announces its Xwayland on stderr; pipe it to a reader (stdout stays discarded).
-            server = reaper.launch("gamescope", command, Map.of(), Redirect.DISCARD, Redirect.PIPE);
+            server = reaper.launch(SessionUnit.GAMESCOPE, command, Map.of(), Redirect.DISCARD, Redirect.PIPE);
         } catch (Exception e) {
             throw new SessionStartException("could not launch gamescope (is it installed?): " + e.getMessage(), e);
         }

@@ -3,6 +3,8 @@ package com.botmaker.session.display;
 import com.botmaker.session.Capability;
 import com.botmaker.session.SessionStartException;
 import com.botmaker.session.process.SessionReaper;
+import com.botmaker.session.process.SessionUnit;
+import com.botmaker.session.impl.NestedSession.Backend;
 
 import com.botmaker.shared.Diag;
 
@@ -89,8 +91,8 @@ public final class NestedDisplay implements SessionDisplay {
             // -displayfd 1: Xephyr picks a free display and writes "<n>\n" to fd 1. -ac drops access control
             // (a private local display), -noreset keeps it alive across the last client, -resizeable lets the
             // game size the root. No ":N" is passed — the whole point is that Xephyr, not us, allocates it.
-            server = reaper.launch("xephyr",
-                List.of("Xephyr", "-displayfd", "1", "-screen", width + "x" + height,
+            server = reaper.launch(SessionUnit.XEPHYR,
+                List.of(Backend.XEPHYR.binaryName(), "-displayfd", "1", "-screen", width + "x" + height,
                     "-ac", "-noreset", "-resizeable"),
                 Map.of(),
                 Redirect.appendTo(out));

@@ -16,6 +16,39 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-06 — `SessionUnit`: the reaper's roles and its unit names are one type
+
+**94 tests (unchanged).** Added: `process/SessionUnit.java`. Changed: `process/SessionReaper.java`,
+`process/SessionBus.java`, `process/SessionMembers.java`, `display/NestedDisplay.java`,
+`display/GamescopeDisplay.java`, `impl/NestedSession.java`, `impl/SessionHostWindow.java`,
+`process/SessionReaperRaceTest.java`. Pairs with the shared entry of the same date.
+
+**Done.** Three closed sets in this stack were spelled as bare strings.
+
+- **`SessionUnit`** (`XEPHYR`, `GAMESCOPE`, `WM`, `DBUS`, `APP`) now types the reaper's `role` parameter.
+  Before, `SessionReaper.launch` took a `String role` and `unitNamesExcept` took another, and nothing
+  connected the token a caller *recorded* to the one `NestedSession` later *excluded* — a mismatch there
+  leaves the display server in the list of processes to shut down before the display goes away, which is the
+  precise ordering the shutdown exists to prevent. `NestedSession`'s private `APP_ROLE` constant is gone; it
+  is `SessionUnit.APP`.
+- **The `botmaker-sess-` prefix is no longer retyped.** `SessionReaper` rebuilt it **seven** times, plus an
+  eighth copy hardcoded inside the `SESSION_SLICE` regex — while `ProcessOrigin.SESSION_UNIT_PREFIX`, the
+  reader that parses it back out of a cgroup path, already owned it in shared. `SessionUnit` takes the prefix
+  from there and offers the constructions around it: `unitName(id)`, `scopeName(id)`, `sliceName(id)`, the
+  `list-units` globs, `probeUnitName(pid)`, `isSessionUnit` and `stripPrefix`. The regex is now built with
+  `Pattern.quote(SESSION_UNIT_PREFIX)`.
+- **Binary names come from `NestedSession.Backend.binaryName()`.** `NestedDisplay` spelled `"Xephyr"` in its
+  argv and `GamescopeDisplay` spelled `"gamescope"` in two places, all beside a `Backend` that already
+  single-sources both. `Backend` in turn now returns `Executables.XEPHYR` / `Executables.GAMESCOPE` from
+  shared, so shared's own gamescope spawn (Waydroid's UI) and this one can no longer drift. `Backend.id()`
+  stays separate and lowercase, as its javadoc already explains: the persisted `session.backend` value must
+  survive a rename of the executable.
+- **Env var names come from `shared`'s new `platform/SessionEnv`** — `NestedSession.sessionEnv()` and its
+  bus start, `SessionMembers`' two `NAME=value` matchers, `SessionHostWindow`'s host-`DISPLAY` read and
+  `SessionReaper`'s `XDG_RUNTIME_DIR` systemd probe.
+
+---
+
 ## 2026-08-06 — the pinned input backend is a type, not the literal `"xtest"`
 
 **Tests unchanged.** Changed: `impl/NestedSession.java`, `impl/AdoptedSession.java` (one argument each).

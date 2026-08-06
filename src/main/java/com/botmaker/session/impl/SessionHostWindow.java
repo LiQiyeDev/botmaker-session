@@ -5,6 +5,7 @@ import com.botmaker.session.display.SessionDisplay;
 import com.botmaker.shared.Diag;
 import com.botmaker.shared.capture.linux.X11;
 import com.botmaker.shared.capture.linux.X11Utils;
+import com.botmaker.shared.platform.SessionEnv;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
@@ -115,7 +116,7 @@ public final class SessionHostWindow {
      * @param timeoutMs     how long to wait for the server to map its window before giving up
      */
     public static SessionHostWindow find(long serverPid, String nameHint, String nestedDisplay, long timeoutMs) {
-        String hostDisplay = System.getenv("DISPLAY");
+        String hostDisplay = System.getenv(SessionEnv.DISPLAY);
         if (hostDisplay == null || hostDisplay.isBlank()) {
             return null;   // a Wayland host with no Xwayland: there is no host window to hide
         }

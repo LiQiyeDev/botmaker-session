@@ -98,7 +98,7 @@ public final class SessionBus implements AutoCloseable {
             File out = SessionReaper.tempOutputFile("botmaker-dbus-");
             // --print-address writes the address to stdout; --nofork keeps the process in our reap group (a
             // forking daemon would escape the scope and outlive the session).
-            Process daemon = reaper.launch("dbus",
+            Process daemon = reaper.launch(SessionUnit.DBUS,
                 List.of(LaunchIsolation.PRIVATE_BUS_BINARY, "--config-file=" + config, "--print-address", "--nofork"),
                 sessionEnv,
                 Redirect.appendTo(out));
