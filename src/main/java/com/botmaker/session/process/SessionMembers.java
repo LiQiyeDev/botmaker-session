@@ -137,6 +137,7 @@ public final class SessionMembers {
         }
         long start = System.currentTimeMillis();
         long deadline = start + timeoutMs;
+        logOrder(ordered);
         ProcessHandle eldest = ordered.get(0);
         eldest.destroy();
         // Wait on the whole set, not just on it: a launcher that shuts down properly takes the game, the Wine
@@ -146,6 +147,7 @@ public final class SessionMembers {
             + ordered.size() + " session process(es) still alive after " + (System.currentTimeMillis() - start) + "ms");
         if (eldest.isAlive()) {
             // Before its children, always: it must not be alive to watch them die.
+            Diag.log("[Session] " + describe(eldest) + " ignored SIGTERM for " + GRACE_MS + "ms — killing it");
             eldest.destroyForcibly();
             awaitExit(List.of(eldest), Math.min(deadline, System.currentTimeMillis() + GRACE_MS));
         }
@@ -153,6 +155,10 @@ public final class SessionMembers {
         // time, oldest first, each finished off before the next is touched (see terminateOneByOne).
         terminateOneByOne(ordered, deadline);
         List<ProcessHandle> stubborn = aliveIn(ordered);
+        if (!stubborn.isEmpty()) {
+            Diag.log("[Session] backstop kill for " + stubborn.size() + " process(es) still alive at the deadline: "
+                + stubborn.stream().map(SessionMembers::describe).reduce((a, b) -> a + ", " + b).orElse(""));
+        }
         stubborn.forEach(ProcessHandle::destroyForcibly);
         if (!stubborn.isEmpty()) {
             // A forcible kill is delivered asynchronously; give it the one poll it needs before reporting.
@@ -188,10 +194,25 @@ public final class SessionMembers {
             p.destroy();
             awaitExit(List.of(p), Math.min(deadline, System.currentTimeMillis() + REMNANT_GRACE_MS));
             if (p.isAlive()) {
+                Diag.log("[Session] remnant " + describe(p) + " ignored SIGTERM — killing it");
                 p.destroyForcibly();
                 awaitExit(List.of(p), Math.min(deadline, System.currentTimeMillis() + REMNANT_GRACE_MS));
             }
         }
+    }
+
+    /**
+     * Name the teardown order before acting on it. Which process was judged eldest <em>is</em> the decision this
+     * class exists to make, and it is invisible after the fact: a crash on close is read as "the launcher died
+     * badly" when the real story is that a helper sorted ahead of it and was signalled first. Printed at the one
+     * moment it can still be checked against what the user saw.
+     */
+    private static void logOrder(List<ProcessHandle> ordered) {
+        StringBuilder line = new StringBuilder("[Session] shutdown order (oldest first): ");
+        for (int i = 0; i < ordered.size(); i++) {
+            line.append(i == 0 ? "" : ", ").append(i + 1).append('.').append(describe(ordered.get(i)));
+        }
+        Diag.log(line.toString());
     }
 
     /**

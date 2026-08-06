@@ -16,6 +16,56 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-06 — gamescope teardown: name every transition, then close the races we own
+
+**87 tests (+2).** Changed: `impl/SessionHostWindow.java`, `impl/NestedSession.java`,
+`process/SessionMembers.java`, `impl/SessionHostWindowTest.java`, `impl/SessionHostWindowLiveTest.java`.
+Improvements plan phase 4. Needs `botmaker-shared`'s `X11.XClearArea` (same date, shared ROADMAP).
+
+Reported symptoms: several black flashes while a game loads, a black screen on close that took BotMaker and
+Heroic down with it, and a gray rectangle left behind when the gamescope window is dragged. Only some of that
+is ours, so the phase is deliberately half instrumentation — the log has to be able to say which.
+
+### Done
+
+- **`SessionHostWindow.Visibility` (`PENDING`/`HIDDEN`/`REVEALED`) replaces a `boolean revealed`.** "Not
+  revealed" and "may still be hidden" are not the same question, and reading one flag for both let the hider
+  thread hide a window *after* an attach revealed it — a minimized session with a game in it, findable only
+  from the taskbar. The old code patched the common ordering with a re-check *after* the hide, which left the
+  case where the hide lands later still. `REVEALED` is now terminal, every mutator is `synchronized`, and
+  `NestedSession` holds the same enum for the window it hasn't found yet, under one lock with the field —
+  publishing the window and deciding what to do with it are one step.
+- **`mappedCountOn(display)` beside `anythingMappedOn`.** The count is what makes a run of flashes legible:
+  each flash is a client unmapping and the next mapping, so `3 → 0 → 1` names the moment gamescope had
+  nothing left to show. `-1` is "couldn't ask" — previously indistinguishable from the boolean's `true`, and
+  the direction matters, because unknown must read as *leave the window alone*.
+- **Every hide/reveal logs its transition** with a wall-clock `HH:mm:ss.SSS` stamp and the client count the
+  decision was taken on, so a user saying "it flashed three times" has three lines to point at.
+- **`SessionMembers.shutdown` logs the order it chose** before acting on it, plus every `destroyForcibly`.
+  Which process was judged eldest *is* the decision this class exists to make, and it was invisible after the
+  fact: a crash on close reads as "the launcher died badly" when the real story is a helper sorting ahead of
+  it.
+- **`close()` waits for the payload to be *gone*, not merely for the list it signalled.** New
+  `awaitNoMembers` re-asks the environment until nothing carries the session's `DISPLAY`/bus, because a
+  launcher shutting down routinely spawns one last helper and reaping the display server out from under it is
+  exactly the X IO error that produced the `SIGTRAP`. It also reveals the host window on the way out — a
+  session torn down while minimized is a window the user never gets back.
+- **`repaintHostBehind()`**, after reveal and after the reap: `XClearArea(root, …, exposures=true)` over the
+  window's last known root-relative bounds (translated via `XTranslateCoordinates`, not the parent-relative
+  attributes, or the rectangle lands at the frame's offset). A nudge, not a fix — see below.
+
+### Deferred / next
+
+- **The gray drag trail may well survive this.** `repaintHostBehind` clears the *root* and asks for `Expose`;
+  a compositor keeping its own damage bookkeeping is free to ignore it, and it does nothing at all for the
+  case that prompted the report (dragging, which we never see). If it persists, the next thing to try is host
+  compositor state, not more X calls from here.
+- **`GamescopeDisplay.defaultCommand` was left alone**, deliberately. If the transition log shows the flashes
+  are gamescope's own output window cycling rather than anything we do, the experiment is `--backend headless`
+  plus a real capture check — measured, on a live box, not blind.
+
+---
+
 ## 2026-08-04 — a session can host native Wayland clients
 
 **85 tests (+2).** Changed: `Capability.java`, `display/SessionDisplay.java`, `display/GamescopeDisplay.java`,

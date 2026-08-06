@@ -130,10 +130,21 @@ public final class NestedSession implements DesktopSession {
     private final SessionBus bus;
 
     private final SessionAttachment attachment;
+    /**
+     * Guards the host window and its {@link #hostWindowState} together. The two are decided on different threads
+     * — the hider finds the window, an attach reveals it — and the interesting case is precisely when they land
+     * at once, so "publish the window" and "decide what to do with it" have to be one step, not two.
+     */
+    private final Object hostWindowLock = new Object();
     /** The server's window on the host desktop while it is being kept out of sight, or {@code null}. */
     private volatile SessionHostWindow hostWindow;
-    /** Set once the session has something to show, so a search still in flight knows not to hide anything. */
-    private volatile boolean revealRequested;
+    /**
+     * What has been decided about the host window <em>including before it was found</em>. It carries the reveal
+     * request the old {@code volatile boolean revealRequested} carried, but as the same closed set
+     * {@link SessionHostWindow.Visibility} uses, so there is one vocabulary across the two objects instead of a
+     * flag here and a flag there that had to be read in the right order to mean anything.
+     */
+    private volatile SessionHostWindow.Visibility hostWindowState = SessionHostWindow.Visibility.PENDING;
     private volatile Process gameProc;
     /** The launched app's captured stdout+stderr, or {@code null} until something has been launched. */
     private volatile AppOutputLog appLog;
@@ -284,17 +295,30 @@ public final class NestedSession implements DesktopSession {
                 + " — leaving bring-up visible");
             return;
         }
-        hostWindow = window;
-        // Two guards against hiding a window that has something real in it — an empty session is the only thing
-        // worth hiding. The second one is what makes this safe on gamescope, whose host window isn't even mapped
-        // until a client maps something on its Xwayland (measured: no WM_STATE, absent from _NET_CLIENT_LIST while
-        // empty) — so by the time we can find it there is already content, and hiding it would hide the launcher.
-        if (revealRequested || SessionHostWindow.anythingMappedOn(display.displayName())) {
-            return;
-        }
-        window.hide();
-        if (revealRequested) {
-            window.reveal();   // ...or in the instant between the check and the hide
+        synchronized (hostWindowLock) {
+            hostWindow = window;
+            // A reveal that arrived while the search was still running is the whole reason this is locked: the
+            // window has to come up shown, not be hidden by a decision taken before the reveal existed.
+            if (hostWindowState == SessionHostWindow.Visibility.REVEALED) {
+                Diag.log("[Session] " + id + ": found the host window after the session already had content"
+                    + " — showing it");
+                window.reveal();
+                return;
+            }
+            // The remaining guard: don't hide a window that has something real in it — an empty session is the
+            // only thing worth hiding. It is what makes this safe on gamescope, whose host window isn't even
+            // mapped until a client maps something on its Xwayland (measured: no WM_STATE, absent from
+            // _NET_CLIENT_LIST while empty), so by the time we can find it there is already content and hiding
+            // it would hide the launcher.
+            int mapped = SessionHostWindow.mappedCountOn(display.displayName());
+            if (mapped != 0) {
+                Diag.log("[Session] " + id + ": leaving the host window visible — "
+                    + (mapped < 0 ? "could not read " + display.displayName() : mapped + " client(s) already on "
+                    + display.displayName()));
+                return;
+            }
+            window.hide(mapped);
+            hostWindowState = window.state();
         }
     }
 
@@ -307,10 +331,12 @@ public final class NestedSession implements DesktopSession {
      * session's own attach already did costs nothing.
      */
     public void revealHostWindow() {
-        revealRequested = true;
-        SessionHostWindow window = hostWindow;
-        if (window != null) {
-            window.reveal();
+        synchronized (hostWindowLock) {
+            hostWindowState = SessionHostWindow.Visibility.REVEALED;
+            SessionHostWindow window = hostWindow;
+            if (window != null) {
+                window.reveal();
+            }
         }
     }
 
@@ -511,8 +537,12 @@ public final class NestedSession implements DesktopSession {
         }
         closed = true;
         LIVE.remove(id);
+        Diag.log("[Session] " + id + ": closing — payload first, then our X connections, then the slice");
         // Before anything the game depends on goes away. See shutdownMembers.
         shutdownMembers();
+        // And show the host window on the way out: a session being torn down while minimized is a window the
+        // user never gets back, and the repaint below has to know where it was.
+        revealHostWindow();
         // Stop following the app's output, but leave the file: a session torn down after a failed launch is
         // exactly when someone wants to read it.
         AppOutputLog output = appLog;
@@ -527,6 +557,12 @@ public final class NestedSession implements DesktopSession {
             try { bus.close(); } catch (Throwable t) { Diag.error("[Session] " + id + ": bus close: " + t.getMessage()); }
         }
         reaper.reap();
+        // The display server's window has just gone with it. Ask the host to repaint where it was: a compositor
+        // that was not tracking that window leaves its last frame on screen as a gray rectangle.
+        SessionHostWindow window = hostWindow;
+        if (window != null) {
+            window.repaintHostBehind();
+        }
         Diag.log("[Session] " + id + ": closed");
     }
 
@@ -552,12 +588,40 @@ public final class NestedSession implements DesktopSession {
         List<ProcessHandle> survivors = SessionMembers.shutdown(members, MEMBER_SHUTDOWN_MS);
         if (survivors.isEmpty()) {
             Diag.log("[Session] " + id + ": session processes exited in " + (System.currentTimeMillis() - started) + "ms");
+            // Not the same question as "the ones we signalled are gone": a launcher shutting down routinely
+            // spawns one last helper, and the display server must not be reaped out from under it. Re-ask the
+            // environment rather than trusting the list we already had.
+            awaitNoMembers(started + MEMBER_SHUTDOWN_MS);
             return;
         }
         // Not fatal — the slice reap follows — but worth saying plainly: these are exactly the processes it
         // cannot reach, so a survivor here is a real orphan.
         Diag.error("[Session] " + id + ": " + survivors.size() + " session process(es) survived SIGKILL: "
             + survivors.stream().map(SessionMembers::describe).reduce((a, b) -> a + ", " + b).orElse(""));
+    }
+
+    /**
+     * Poll until nothing carries this session's environment any more, or {@code deadline} passes — the
+     * "is the payload really gone?" question, asked of the environment the same way membership itself is.
+     *
+     * <p>It exists because the step after it kills the display server, and every process still holding a
+     * connection to {@code :N} when that happens takes an X IO error: the {@code SIGTRAP} coredump this whole
+     * ordering was built to remove. A late-spawned helper is exactly the case the signalled-list wait cannot
+     * see, and it is cheap to check — the common outcome is one scan that finds nothing.
+     */
+    private void awaitNoMembers(long deadline) {
+        while (System.currentTimeMillis() < deadline) {
+            List<ProcessHandle> stragglers = SessionMembers.of(display.displayName(),
+                bus == null ? null : bus.address(), reaper.unitNamesExcept(APP_ROLE));
+            if (stragglers.isEmpty()) {
+                return;
+            }
+            Diag.log("[Session] " + id + ": still waiting on " + stragglers.size()
+                + " late session process(es) before " + display.displayName() + " goes away: "
+                + stragglers.stream().map(SessionMembers::describe).reduce((a, b) -> a + ", " + b).orElse(""));
+            SessionMembers.shutdown(stragglers, Math.max(0, deadline - System.currentTimeMillis()));
+            sleep();   // so an unkillable straggler costs a poll per pass, not a spin on the process table
+        }
     }
 
     /** The pid rooting this session's display-server tree — see {@link SessionDisplay#serverPid()}. */

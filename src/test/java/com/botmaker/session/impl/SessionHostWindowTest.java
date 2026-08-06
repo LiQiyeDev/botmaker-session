@@ -8,7 +8,9 @@ import org.junit.jupiter.api.condition.OS;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The part of {@link SessionHostWindow} that needs no display server of our own: "there is no host window" must
@@ -45,5 +47,21 @@ class SessionHostWindowTest {
         } finally {
             sleeper.destroyForcibly();
         }
+    }
+
+    /**
+     * A display that can't be asked answers {@code -1}, and the boolean built on it answers "there is content".
+     *
+     * <p>The direction is the safety property, not a detail: the caller's response to "there is content" is to
+     * leave the window alone, so an unreadable display costs a visible bring-up. Reading the same failure as
+     * {@code 0} would minimize a window on no evidence at all — and {@code 0} is now a value the count really
+     * returns, which is exactly why the unknown case had to stop sharing it.
+     */
+    @Test
+    void adisplayThatCannotBeAskedIsUnknownAndCountsAsContent() {
+        assertEquals(-1, SessionHostWindow.mappedCountOn(":does-not-exist"),
+            "an unopenable display is unknown, not empty");
+        assertTrue(SessionHostWindow.anythingMappedOn(":does-not-exist"),
+            "and unknown must read as 'leave the window alone'");
     }
 }

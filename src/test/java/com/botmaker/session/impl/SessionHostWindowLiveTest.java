@@ -87,6 +87,36 @@ class SessionHostWindowLiveTest {
     }
 
     /**
+     * A revealed window is never hidden again, asserted against X rather than against the flag.
+     *
+     * <p>This is the race the {@link SessionHostWindow.Visibility} state replaced a boolean to close: the hider
+     * runs on its own thread and can decide to hide while an attach is revealing, and the old code patched that
+     * with a re-check <em>after</em> the hide — which fixed the common ordering and left the window minimized
+     * whenever the hide landed later still. A minimized session with a game running in it is invisible and
+     * unfindable; the user's only recourse is the taskbar.
+     */
+    @Test
+    void aRevealedHostWindowRefusesToBeHiddenAgain() throws Exception {
+        assumeLive();
+        NestedSession session = startSession();
+        try {
+            session.launch(LaunchSpec.parse("cli:xterm -e sleep 300"));
+            SessionHostWindow hostWindow = findHostWindow(session);
+            hostWindow.reveal();
+            assertTrue(awaitViewable(hostWindow.windowId(), 16_000), "the host window should be on screen");
+
+            hostWindow.hide();   // a hider thread that lost the race, arriving late
+
+            assertEquals(SessionHostWindow.Visibility.REVEALED, hostWindow.state(),
+                "a reveal is terminal — nothing may move the window out of it");
+            assertTrue(awaitViewable(hostWindow.windowId(), 2_000),
+                "the window must still be on screen: a late hide is the bug, not the behaviour");
+        } finally {
+            session.close();
+        }
+    }
+
+    /**
      * The other direction, and the one Studio's overlay editor rests on: a <em>host-side</em> X capture of the
      * session's host window reads the session's real pixels. The test above proves the session can read itself;
      * that says nothing about whether the host window is a real drawable rather than a compositor placeholder,

@@ -9,6 +9,9 @@ import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
 
+import java.awt.Rectangle;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -40,17 +43,47 @@ import java.util.Set;
  * {@code _NET_CLIENT_LIST}, a server that advertises neither {@code _NET_WM_PID} nor a distinctive class. That
  * case is today's behaviour: a visible window during bring-up, no regression. Every operation opens its own
  * short-lived connection to the host display rather than holding one for the session's lifetime, because there
- * are only two of them (hide once, reveal once) and a session should not carry an X connection it almost never
- * uses.
+ * are only a handful of them over a whole session (hide once, reveal once, a repaint nudge at teardown) and a
+ * session should not carry an X connection it almost never uses.
+ *
+ * <p><b>{@link Visibility} is the state, and it is authoritative.</b> hide and reveal run on different threads
+ * — the hider and whatever attaches — and every method that changes it is {@code synchronized} on this
+ * instance, so "may this still be hidden?" is answered once rather than inferred twice from a flag.
  */
 public final class SessionHostWindow {
 
     private static final long POLL_MS = 100;
+    /** Wall-clock, millisecond resolution: these transitions are read against a user saying "it flashed there". */
+    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
+
+    /**
+     * What this window has had done to it — the one authority on whether it may still be hidden.
+     *
+     * <p>It replaced a {@code boolean revealed} that {@link #hide} and {@link #reveal} each read and wrote
+     * independently, on two threads. "Not revealed" is not the same question as "may be hidden", and conflating
+     * them let a window be hidden <em>after</em> a reveal (the hider thread wins the race with an attach, having
+     * decided to hide before the reveal arrived) — a black rectangle the user has to find and un-minimize by
+     * hand. With the state explicit, {@link #REVEALED} is terminal and the transition is decided once, under a
+     * lock, rather than inferred from a flag twice.
+     */
+    public enum Visibility {
+        /** Found, untouched — the only state a hide is allowed from. */
+        PENDING,
+        /** We minimized it, and are waiting for the session to have something worth showing. */
+        HIDDEN,
+        /** The session has content (or teardown asked): shown, and never hidden again. */
+        REVEALED
+    }
 
     private final String hostDisplay;
     private final long windowId;
     private final String label;
-    private volatile boolean revealed;
+    private volatile Visibility state = Visibility.PENDING;
+    /**
+     * Where the window last was on the host desktop, in root coordinates — remembered while it still exists so
+     * {@link #repaintHostBehind} can ask the desktop to repaint that rectangle once it doesn't.
+     */
+    private volatile Rectangle lastBounds;
 
     private SessionHostWindow(String hostDisplay, long windowId, String label) {
         this.hostDisplay = hostDisplay;
@@ -160,9 +193,23 @@ public final class SessionHostWindow {
      * content" is to leave the window alone, which is the safe direction.
      */
     public static boolean anythingMappedOn(String displayName) {
+        int mapped = mappedCountOn(displayName);
+        return mapped != 0;
+    }
+
+    /**
+     * How many windows on {@code displayName} count as content by {@link #anythingMappedOn}'s test, or
+     * {@code -1} when the display couldn't be asked.
+     *
+     * <p>The count rather than the boolean is what makes a sequence of black flashes legible: each flash is a
+     * client unmapping and the next one mapping, so a log reading {@code 3 → 0 → 1} names the moment gamescope
+     * had nothing left to show and unmapped its own host window. The boolean above answers the only question
+     * the hider actually asks; this answers the one the log has to.
+     */
+    public static int mappedCountOn(String displayName) {
         Pointer display = open(displayName);
         if (display == null) {
-            return true;
+            return -1;
         }
         try {
             Pointer root = X11.INSTANCE.XDefaultRootWindow(display);
@@ -171,25 +218,26 @@ public final class SessionHostWindow {
             PointerByReference childrenReturn = new PointerByReference();
             IntByReference count = new IntByReference();
             if (X11.INSTANCE.XQueryTree(display, root, rootReturn, parentReturn, childrenReturn, count) == 0) {
-                return true;
+                return -1;
             }
             Pointer children = childrenReturn.getValue();
             int n = count.getValue();
             if (children == null || n <= 0) {
-                return false;
+                return 0;
             }
             try {
+                int content = 0;
                 for (long child : children.getLongArray(0, n)) {
                     if (isContent(display, new Pointer(child))) {
-                        return true;
+                        content++;
                     }
                 }
+                return content;
             } finally {
                 X11.INSTANCE.XFree(children);
             }
-            return false;
         } catch (Throwable t) {
-            return true;
+            return -1;
         } finally {
             close(display);
         }
@@ -209,9 +257,21 @@ public final class SessionHostWindow {
         return windowId;
     }
 
-    /** Minimize the window. No-op once {@link #reveal} has run — a revealed session is never re-hidden. */
-    public void hide() {
-        if (revealed) {
+    /** What has been done to this window so far — see {@link Visibility}. */
+    public Visibility state() {
+        return state;
+    }
+
+    /**
+     * Minimize the window, and say so. Allowed only from {@link Visibility#PENDING}: a window that has been
+     * revealed is never hidden again, and one already hidden is not hidden twice.
+     *
+     * @param mappedClients what the caller's content check saw on the nested display, purely for the log
+     *                      ({@code -1} for "not asked")
+     */
+    public synchronized void hide(int mappedClients) {
+        if (state != Visibility.PENDING) {
+            Diag.log(stamp() + " [Session] not hiding the " + label + " — already " + state);
             return;
         }
         Pointer display = open(hostDisplay);
@@ -219,25 +279,39 @@ public final class SessionHostWindow {
             return;
         }
         try {
+            rememberBounds(display);
             X11.INSTANCE.XIconifyWindow(display, new Pointer(windowId), X11.INSTANCE.XDefaultScreen(display));
             X11.INSTANCE.XFlush(display);
-            Diag.log("[Session] minimized the " + label + " until there is something in it");
+            state = Visibility.HIDDEN;
+            Diag.log(stamp() + " [Session] PENDING -> HIDDEN: minimized the " + label
+                + " until there is something in it (" + clients(mappedClients) + ")");
         } catch (Throwable t) {
-            Diag.error("[Session] could not minimize the " + label + ": " + t.getMessage());
+            Diag.error(stamp() + " [Session] could not minimize the " + label + ": " + t.getMessage());
         } finally {
             close(display);
         }
     }
 
+    /** {@link #hide(int)} without a content count to report. */
+    public void hide() {
+        hide(-1);
+    }
+
     /**
-     * Restore and raise the window — the session now has a window of its own to show. Idempotent: only the first
-     * call does anything, so the per-attach call site can stay unconditional.
+     * Restore and raise the window — the session now has a window of its own to show. Idempotent and terminal:
+     * only the first call does anything, and after it {@link #hide} can no longer fire, so the per-attach call
+     * site stays unconditional.
+     *
+     * <p>The map/raise runs even from {@link Visibility#PENDING} (we may never have hidden it): the public
+     * {@code revealHostWindow} exists partly so a host-side tool can un-minimize a session a <em>user</em>
+     * minimized, and refusing that because we weren't the one who hid it would be a regression.
      */
-    public void reveal() {
-        if (revealed) {
+    public synchronized void reveal() {
+        if (state == Visibility.REVEALED) {
             return;
         }
-        revealed = true;
+        Visibility prior = state;
+        state = Visibility.REVEALED;
         Pointer display = open(hostDisplay);
         if (display == null) {
             return;
@@ -249,13 +323,81 @@ public final class SessionHostWindow {
             X11.INSTANCE.XMapWindow(display, window);
             X11.INSTANCE.XRaiseWindow(display, window);
             X11.INSTANCE.XFlush(display);
-            Diag.log("[Session] restored the " + label + " — the session has a window now");
+            rememberBounds(display);
+            Diag.log(stamp() + " [Session] " + prior + " -> REVEALED: restored the " + label
+                + " — the session has a window now");
         } catch (Throwable t) {
-            Diag.error("[Session] could not restore the " + label + ": " + t.getMessage()
+            Diag.error(stamp() + " [Session] could not restore the " + label + ": " + t.getMessage()
                 + " — un-minimize it by hand to watch the session");
         } finally {
             close(display);
         }
+    }
+
+    /**
+     * Ask the host desktop to repaint the rectangle this window last occupied — the nudge for the gray trail a
+     * dragged or destroyed gamescope window leaves behind.
+     *
+     * <p>It is a nudge and not a fix, and the distinction is worth keeping straight: {@code XClearArea} on the
+     * root clears the <em>root's</em> contents and sends {@code Expose} over that region, which repaints the
+     * desktop background and anything that redraws on exposure. A host compositor that keeps its own damage
+     * bookkeeping may ignore it entirely, and nothing here can make it not. Best-effort throughout — an
+     * unreadable geometry or a closed display simply skips it.
+     */
+    public void repaintHostBehind() {
+        Rectangle bounds = lastBounds;
+        if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+            return;
+        }
+        Pointer display = open(hostDisplay);
+        if (display == null) {
+            return;
+        }
+        try {
+            Pointer root = X11.INSTANCE.XDefaultRootWindow(display);
+            X11.INSTANCE.XClearArea(display, root, bounds.x, bounds.y, bounds.width, bounds.height, true);
+            X11.INSTANCE.XFlush(display);
+            Diag.log(stamp() + " [Session] asked the host to repaint " + bounds.width + "x" + bounds.height
+                + " at " + bounds.x + "," + bounds.y + " behind the " + label);
+        } catch (Throwable t) {
+            Diag.error(stamp() + " [Session] could not ask the host to repaint behind the " + label + ": "
+                + t.getMessage());
+        } finally {
+            close(display);
+        }
+    }
+
+    /** Cache the window's root-relative geometry, on a connection the caller already has open. */
+    private void rememberBounds(Pointer display) {
+        try {
+            Pointer window = new Pointer(windowId);
+            X11.XWindowAttributes attributes = new X11.XWindowAttributes();
+            if (X11.INSTANCE.XGetWindowAttributes(display, window, attributes) == 0
+                || attributes.width <= 0 || attributes.height <= 0) {
+                return;
+            }
+            // The attributes' x/y are relative to the parent, which under a reparenting WM is the frame and not
+            // the root — translate rather than trusting them, or the cleared rectangle lands at the frame's
+            // offset from wherever the user dragged the window to.
+            IntByReference rootX = new IntByReference();
+            IntByReference rootY = new IntByReference();
+            PointerByReference child = new PointerByReference();
+            Pointer root = X11.INSTANCE.XDefaultRootWindow(display);
+            if (X11.INSTANCE.XTranslateCoordinates(display, window, root, 0, 0, rootX, rootY, child) == 0) {
+                return;
+            }
+            lastBounds = new Rectangle(rootX.getValue(), rootY.getValue(), attributes.width, attributes.height);
+        } catch (Throwable ignored) {
+            // Geometry is only ever used for a cosmetic repaint; not knowing it costs nothing.
+        }
+    }
+
+    private static String clients(int mappedClients) {
+        return mappedClients < 0 ? "content unknown" : mappedClients + " mapped client(s) on the session";
+    }
+
+    private static String stamp() {
+        return LocalTime.now().format(STAMP);
     }
 
     private static Pointer open(String hostDisplay) {
