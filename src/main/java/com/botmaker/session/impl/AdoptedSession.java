@@ -13,6 +13,7 @@ import com.botmaker.shared.Diag;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
 import com.botmaker.shared.capture.linux.LinuxController;
+import com.botmaker.shared.capture.linux.input.LinuxInputBackendId;
 import com.botmaker.shared.capture.linux.X11;
 import com.botmaker.shared.launch.LaunchSpec;
 import com.sun.jna.Pointer;
@@ -132,7 +133,7 @@ public final class AdoptedSession implements DesktopSession {
         }
         LinuxController controller;
         try {
-            controller = LinuxController.forDisplay(display, "xtest",
+            controller = LinuxController.forDisplay(display, LinuxInputBackendId.XTEST,
                 SessionBackends.pointerWarpFor(backend), SessionBackends.inputTimingFor(backend));
         } catch (Exception e) {
             X11.INSTANCE.XCloseDisplay(x11);

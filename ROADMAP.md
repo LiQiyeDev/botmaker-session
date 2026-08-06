@@ -16,6 +16,20 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-06 — the pinned input backend is a type, not the literal `"xtest"`
+
+**Tests unchanged.** Changed: `impl/NestedSession.java`, `impl/AdoptedSession.java` (one argument each).
+
+**Done.** Both sessions pin XTest on their private display — on a display the bot owns, device-level input is
+both accepted by games and non-intrusive, and the process-wide `botmaker.linux.input` property that steers
+`:0` must not decide `:N`'s backend. They said so with the bare string `"xtest"`; they now pass
+`LinuxInputBackendId.XTEST`, the closed set shared grew in the same change (see
+[`../botmaker-shared/ROADMAP.md`](../botmaker-shared/ROADMAP.md), same date). No behaviour change here — the
+point is that a typo in the pin is now a compile error rather than a silent fall-through to the
+cursor-preserving backend, which is what the old string switch did.
+
+---
+
 ## 2026-08-06 — two bugs a live gamescope run found: a stranger's window, and the wrong window
 
 **94 tests (+7).** Changed: `impl/SessionHostWindow.java`, `impl/SessionAttachment.java`,

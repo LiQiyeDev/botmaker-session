@@ -21,6 +21,7 @@ import com.botmaker.shared.Diag;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
 import com.botmaker.shared.capture.linux.LinuxController;
+import com.botmaker.shared.capture.linux.input.LinuxInputBackendId;
 import com.botmaker.shared.capture.linux.X11;
 import com.botmaker.shared.capture.linux.X11Utils;
 import com.botmaker.shared.launch.GameLauncher;
@@ -206,7 +207,7 @@ public final class NestedSession implements DesktopSession {
             // process-wide botmaker.linux.input property (which steers :0) must not decide :N's backend. The
             // warp convention comes with the backend — gamescope's Xwayland reads an absolute warp as
             // window-relative, so its clicks need the focus origin subtracted (SessionBackends.pointerWarpFor).
-            controller = LinuxController.forDisplay(display.displayName(), "xtest",
+            controller = LinuxController.forDisplay(display.displayName(), LinuxInputBackendId.XTEST,
                 SessionBackends.pointerWarpFor(options.backend()),
                 SessionBackends.inputTimingFor(options.backend()));
             ewmh = X11.INSTANCE.XOpenDisplay(display.displayName());
