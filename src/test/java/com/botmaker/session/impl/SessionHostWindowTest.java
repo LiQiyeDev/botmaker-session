@@ -31,7 +31,7 @@ class SessionHostWindowTest {
     void aProcessThatOwnsNoHostWindowIsNullRatherThanAnException() throws Exception {
         Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
         try {
-            assertNull(SessionHostWindow.find(sleeper.pid(), "definitely-not-a-display-server", 200));
+            assertNull(SessionHostWindow.find(sleeper.pid(), "definitely-not-a-display-server", ":99", 200));
         } finally {
             sleeper.destroyForcibly();
         }
@@ -43,7 +43,7 @@ class SessionHostWindowTest {
         // instead of a NullPointerException out of the string compare.
         Process sleeper = new ProcessBuilder(List.of("sleep", "5")).start();
         try {
-            assertNull(SessionHostWindow.find(sleeper.pid(), null, 200));
+            assertNull(SessionHostWindow.find(sleeper.pid(), null, ":99", 200));
         } finally {
             sleeper.destroyForcibly();
         }

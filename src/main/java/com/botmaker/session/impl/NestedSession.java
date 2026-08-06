@@ -289,10 +289,11 @@ public final class NestedSession implements DesktopSession {
 
     private void findAndHideHostWindow() {
         SessionHostWindow window = SessionHostWindow.find(display.serverPid(), options.backend().binaryName(),
-            HOST_WINDOW_FIND_MS);
+            display.displayName(), HOST_WINDOW_FIND_MS);
         if (window == null) {
-            Diag.log("[Session] " + id + ": no host window found for " + options.backend().binaryName()
-                + " — leaving bring-up visible");
+            Diag.log("[Session] " + id + ": no host window could be proved ours for "
+                + options.backend().binaryName() + " on " + display.displayName()
+                + " — leaving bring-up visible rather than minimizing a window that might be the user's");
             return;
         }
         synchronized (hostWindowLock) {
@@ -409,6 +410,9 @@ public final class NestedSession implements DesktopSession {
 
     @Override
     public void attach(GenericWindow window) {
+        // An explicit attach names the window it wants, so stop following the launcher chain: the caller has
+        // already answered the question the promotion exists to guess at.
+        attachment.followLauncherChain(false);
         attachment.attach(window);
         if (window != null) {
             // There is something in the session now, so the host window is worth looking at.
@@ -485,7 +489,13 @@ public final class NestedSession implements DesktopSession {
             GenericWindow target = awaitWindow(proc, before, windowTimeoutMs);
             if (target != null) {
                 attach(target);
-                Diag.log("[Session] " + id + ": attached to '" + target.getTitle() + "' on " + display.displayName());
+                // A store launcher's first window is its own UI, not the game's, and it stays alive behind the
+                // game — so for those kinds the attach is provisional and the newest window keeps winning.
+                boolean viaLauncher = HostLauncherProbe.routesThroughDaemon(spec.kind());
+                attachment.followLauncherChain(viaLauncher);
+                Diag.log("[Session] " + id + ": attached to '" + target.getTitle() + "' on " + display.displayName()
+                    + (viaLauncher ? " — provisionally, it launches through " + spec.kind()
+                    + " and the game's own window comes later" : ""));
                 return;
             }
             Diag.error("[Session] " + id + ": `" + String.join(" ", command) + "` mapped no window on "

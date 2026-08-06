@@ -16,6 +16,41 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-06 — two bugs a live gamescope run found: a stranger's window, and the wrong window
+
+**94 tests (+7).** Changed: `impl/SessionHostWindow.java`, `impl/SessionAttachment.java`,
+`impl/NestedSession.java`, `impl/SessionHostWindowTest.java`, `impl/SessionHostWindowLiveTest.java`; new
+`impl/SessionAttachmentTest.java`. Both found by running the entry below on a real box, neither of them new.
+
+### Done
+
+- **A session no longer minimizes a window it cannot prove is its own.** `SessionHostWindow.find`'s fallback
+  match was "one window whose `WM_CLASS` mentions the server binary", which on a desktop already running
+  gamescope games picked one of *those* — the user watched their own game minimize when a session started. The
+  ambiguity guard didn't help: it only fired at two candidates, and with one stranger's window and our own not
+  yet mapped there was exactly one. Class now identifies the *kind* and the title's display name identifies the
+  *instance*: `find` takes the nested `:N` and requires both (`namesDisplay` compares whole display numbers, so
+  `:2` doesn't match `:20`). Where neither signal fires we leave the bring-up visible, which is the pre-feature
+  behaviour. Xephyr titles its window `Xephyr on :2 …`, so the feature keeps working where it was doing
+  anything; on gamescope the hide was already a no-op (its host window is unmapped until it has content).
+- **The session follows the launcher chain instead of driving the store page.** Heroic launching Firestone maps
+  its library window first, keeps it alive and mapped behind the game, and the game's window arrives minutes
+  later — so `SessionAttachment`'s replace-when-dead rule never fired and every capture, every keystroke and
+  Pilot's whole stream went to the store page while the game sat visibly on top of it. `followLauncherChain` is
+  armed by `launchAndAttach` for kinds that route through a store launcher (`HostLauncherProbe
+  .routesThroughDaemon`) and lets the newest top-level take over from a live attachment, re-scanned at most
+  every 500ms because `resolve()` is on the capture path. Off for every other kind and cleared by an explicit
+  `attach` — a bot that named its window is not asking us to guess. The rule is symmetric, so exiting the game
+  back to the launcher promotes back.
+
+### Deferred / next
+
+- **The black blip on close survives**, reported on the same run. `repaintHostBehind` (previous entry) was
+  always a nudge; a blip at teardown is the host compositor's own frame, and the next move is to read the
+  timestamped transition log from a real close rather than to add another X call blind.
+
+---
+
 ## 2026-08-06 — gamescope teardown: name every transition, then close the races we own
 
 **87 tests (+2).** Changed: `impl/SessionHostWindow.java`, `impl/NestedSession.java`,

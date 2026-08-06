@@ -184,7 +184,8 @@ class SessionHostWindowLiveTest {
      * session hunts for it off the start path. Skips (rather than fails) where no host WM publishes a client list.
      */
     private static SessionHostWindow findHostWindow(NestedSession session) {
-        SessionHostWindow hostWindow = SessionHostWindow.find(session.serverPid(), backend().binaryName(), 16_000);
+        SessionHostWindow hostWindow = SessionHostWindow.find(session.serverPid(), backend().binaryName(),
+            session.displayName(), 16_000);
         assumeTrue(hostWindow != null, "needs a host WM that publishes _NET_CLIENT_LIST to find the window");
         return hostWindow;
     }

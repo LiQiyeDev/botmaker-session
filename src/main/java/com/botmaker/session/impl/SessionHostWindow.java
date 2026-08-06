@@ -97,14 +97,24 @@ public final class SessionHostWindow {
      *
      * <p>Two signals, in order. {@code _NET_WM_PID} matched against {@code serverPid} <em>or any of its
      * descendants</em> — under the systemd strategy {@code serverPid} is the {@code systemd-run --scope} wrapper,
-     * so the server itself is a child. Failing that, an unambiguous {@code WM_CLASS} match on {@code nameHint} (the
-     * server binary's name), which covers a server that publishes no EWMH pid at all.
+     * so the server itself is a child. Failing that, a window whose {@code WM_CLASS} mentions {@code nameHint}
+     * <em>and</em> whose title names {@code nestedDisplay}, which covers a server that publishes no EWMH pid at all
+     * (Xephyr titles its output window {@code "Xephyr on :2 …"}).
      *
-     * @param serverPid the pid the session launched to get the server up (see {@link SessionDisplay#serverPid()})
-     * @param nameHint  the server binary's name, e.g. {@code "gamescope"} — used only as the fallback match
-     * @param timeoutMs how long to wait for the server to map its window before giving up
+     * <p><b>The class alone is not enough, measured.</b> The fallback used to accept any window whose
+     * {@code WM_CLASS} matched, as long as only one did — and a user running their own gamescope games beside the
+     * Studio had one of them minimized by a session that had not yet mapped its own window. A window we are about
+     * to iconify has to be provably ours, so "one candidate" was replaced by "names our display": a stranger's
+     * gamescope never mentions {@code :N}. Where neither signal fires we simply leave the bring-up visible, which
+     * is the pre-feature behaviour and costs nothing.
+     *
+     * @param serverPid     the pid the session launched to get the server up (see {@link SessionDisplay#serverPid()})
+     * @param nameHint      the server binary's name, e.g. {@code "gamescope"} — only ever half of the fallback match
+     * @param nestedDisplay the display the server owns, e.g. {@code ":2"} — the other half; {@code null} disables
+     *                      the fallback entirely, leaving only the pid match
+     * @param timeoutMs     how long to wait for the server to map its window before giving up
      */
-    public static SessionHostWindow find(long serverPid, String nameHint, long timeoutMs) {
+    public static SessionHostWindow find(long serverPid, String nameHint, String nestedDisplay, long timeoutMs) {
         String hostDisplay = System.getenv("DISPLAY");
         if (hostDisplay == null || hostDisplay.isBlank()) {
             return null;   // a Wayland host with no Xwayland: there is no host window to hide
@@ -117,7 +127,7 @@ public final class SessionHostWindow {
             long deadline = System.currentTimeMillis() + timeoutMs;
             do {
                 Set<Long> pids = treeOf(serverPid);
-                Long found = search(display, pids, nameHint);
+                Long found = search(display, pids, nameHint, nestedDisplay);
                 if (found != null) {
                     return new SessionHostWindow(hostDisplay, found, nameHint + " window 0x"
                         + Long.toHexString(found) + " on " + hostDisplay);
@@ -132,10 +142,9 @@ public final class SessionHostWindow {
         }
     }
 
-    /** The first host top-level owned by {@code pids}, else the only one whose {@code WM_CLASS} is {@code nameHint}. */
-    private static Long search(Pointer display, Set<Long> pids, String nameHint) {
-        Long byClass = null;
-        boolean classAmbiguous = false;
+    /** The first host top-level owned by {@code pids}, else the first that is provably our server's — see {@link #find}. */
+    private static Long search(Pointer display, Set<Long> pids, String nameHint, String nestedDisplay) {
+        Long byName = null;
         for (Pointer window : X11Utils.getClientList(display)) {
             if (window == null || Pointer.nativeValue(window) == 0) {
                 continue;
@@ -143,29 +152,51 @@ public final class SessionHostWindow {
             if (pids.contains(X11Utils.getWindowPid(display, window))) {
                 return Pointer.nativeValue(window);
             }
-            if (isClass(display, window, nameHint)) {
-                classAmbiguous = byClass != null;
-                byClass = Pointer.nativeValue(window);
+            if (byName == null && isOurServer(display, window, nameHint, nestedDisplay)) {
+                byName = Pointer.nativeValue(window);
             }
         }
-        // Two windows of the same class and no pid to separate them: that is another session's server (or another
-        // gamescope entirely), and minimizing the wrong one is worse than not minimizing at all.
-        return classAmbiguous ? null : byClass;
+        return byName;
     }
 
     /**
-     * Whether {@code window}'s {@code WM_CLASS} mentions {@code nameHint}, case-insensitively.
+     * Whether {@code window} is our own display server's, judged without a pid: its {@code WM_CLASS} mentions the
+     * server binary <em>and</em> its title names the display that server owns. Both halves are required.
      *
-     * <p>Class, deliberately not title. A title is whatever the app decides to put there, so a terminal running
-     * {@code gamescope …}, or an editor with the word in a filename, would both match — and this window is about to
-     * be minimized, so a false positive means minimizing something of the user's.
+     * <p>The class alone identifies a <em>kind</em> of window, not an instance, and the user may well be running
+     * the same kind themselves. The display name identifies the instance: {@code :N} is ours by construction, and
+     * a server that puts it in its title is telling us so. Neither half is load-bearing on its own — the class
+     * keeps an unrelated window that happens to mention {@code :2} out, the display keeps a stranger's gamescope
+     * out — and the window is about to be minimized, so a false positive costs the user a window of theirs.
      */
-    private static boolean isClass(Pointer display, Pointer window, String nameHint) {
-        if (nameHint == null || nameHint.isBlank()) {
+    private static boolean isOurServer(Pointer display, Pointer window, String nameHint, String nestedDisplay) {
+        if (nameHint == null || nameHint.isBlank() || nestedDisplay == null || nestedDisplay.isBlank()) {
             return false;
         }
         String wmClass = X11Utils.getWindowProperty(display, window, "WM_CLASS", "STRING");
-        return wmClass != null && wmClass.toLowerCase(Locale.ROOT).contains(nameHint.toLowerCase(Locale.ROOT));
+        if (wmClass == null || !wmClass.toLowerCase(Locale.ROOT).contains(nameHint.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        return namesDisplay(X11Utils.getWindowTitle(display, window), nestedDisplay);
+    }
+
+    /**
+     * Whether {@code title} mentions {@code nestedDisplay} as a whole display number — {@code ":2"} must not match
+     * the {@code ":20"} of a session that happens to be running beside ours.
+     */
+    private static boolean namesDisplay(String title, String nestedDisplay) {
+        if (title == null) {
+            return false;
+        }
+        int at = title.indexOf(nestedDisplay);
+        while (at >= 0) {
+            int after = at + nestedDisplay.length();
+            if (after >= title.length() || !Character.isDigit(title.charAt(after))) {
+                return true;
+            }
+            at = title.indexOf(nestedDisplay, at + 1);
+        }
+        return false;
     }
 
     /** {@code pid} and every descendant of it that exists right now. */
