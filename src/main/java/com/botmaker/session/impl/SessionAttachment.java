@@ -1,10 +1,10 @@
 package com.botmaker.session.impl;
 
+import com.botmaker.session.remote.DisplayLink;
+import com.botmaker.session.remote.WindowIds;
+
 import com.botmaker.shared.Diag;
 import com.botmaker.shared.capture.GenericWindow;
-import com.botmaker.shared.capture.NativeController;
-import com.botmaker.shared.capture.linux.X11Utils;
-import com.sun.jna.Pointer;
 
 /**
  * Which window a session drives, and the one rule for keeping that answer true: <b>re-resolve when the window we
@@ -41,9 +41,8 @@ public final class SessionAttachment {
     /** How often the promotion re-scans, at most. A capture loop calls {@link #resolve} on every single frame. */
     static final long PROMOTION_INTERVAL_MS = 500;
 
-    private final NativeController controller;
-    /** Second X connection used only for the cheap liveness probe; {@code null} disables it (nothing to probe). */
-    private final Pointer x11Display;
+    /** The display this attachment enumerates and probes — out of process, so a dying {@code :N} can't kill us. */
+    private final DisplayLink display;
     /** How this attachment names itself in a log line — a session id and its display. */
     private final String label;
 
@@ -53,9 +52,8 @@ public final class SessionAttachment {
     /** Earliest wall-clock at which the promotion may scan again; {@code 0} means "on the next call". */
     private volatile long nextPromotionAt;
 
-    public SessionAttachment(NativeController controller, Pointer x11Display, String label) {
-        this.controller = controller;
-        this.x11Display = x11Display;
+    public SessionAttachment(DisplayLink display, String label) {
+        this.display = display;
         this.label = label;
     }
 
@@ -123,7 +121,7 @@ public final class SessionAttachment {
         }
         nextPromotionAt = now + PROMOTION_INTERVAL_MS;
         GenericWindow newest = newestWindow();
-        if (newest == null || idOf(newest) == idOf(current)) {
+        if (newest == null || WindowIds.of(newest) == WindowIds.of(current)) {
             return current;
         }
         attached = newest;
@@ -132,19 +130,13 @@ public final class SessionAttachment {
         return newest;
     }
 
-    /** A window's native id, or {@code 0} when it has none — two windows without one are not the same window. */
-    private static long idOf(GenericWindow window) {
-        Object handle = window == null ? null : window.getNativeHandle();
-        return handle instanceof Pointer p ? Pointer.nativeValue(p) : 0;
-    }
-
     /** Whether {@code window} still exists and is mapped. */
     private boolean isViewable(GenericWindow window) {
-        if (x11Display == null) {
+        if (display == null) {
             return true; // nothing to probe with: never invent a death, so a live attachment is left alone
         }
         try {
-            return X11Utils.isWindowViewable(x11Display, (Pointer) window.getNativeHandle());
+            return display.windowViewable(WindowIds.of(window));
         } catch (Exception e) {
             return false;
         }
@@ -154,7 +146,7 @@ public final class SessionAttachment {
     private GenericWindow newestWindow() {
         GenericWindow newest = null;
         try {
-            for (GenericWindow w : controller.getAllWindows()) {
+            for (GenericWindow w : display.getAllWindows()) {
                 newest = w;
             }
         } catch (Exception e) {

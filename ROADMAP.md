@@ -16,6 +16,58 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-07 — the `:N` connection moves out of process (`com.botmaker.session.remote`)
+
+**The bug.** Closing a game's window took Studio down with it. Not the reaper, not the slice: an untrapped
+Xlib **I/O** error. `X11ErrorTrap` installs `XSetErrorHandler` (protocol errors) but never
+`XSetIOErrorHandler`, and Xlib's default I/O handler calls `exit(1)` **in the process holding the
+connection**. A nested session held two open `Display*` handles to `:N` inside Studio's own JVM — the
+`LinuxController`'s and a second one for EWMH reads — so when the display server went away, Studio vanished
+mid-frame with no exception and no `hs_err`. Reproduced end to end, and it is not really trappable in
+process either: an `XSetIOErrorHandler` handler is not allowed to return, so the best an in-process trap can
+do is choose how to die.
+
+**Done**
+- New package `com.botmaker.session.remote`, built around **`DisplayLink`** — one seam for everything a
+  session does to `:N`. Beyond `NativeController` it carries the reads a session used to make against its
+  own EWMH connection (`windowViewable`, `windowPid`, `hasWindowManager`, `mappedCount`, `screenSize`,
+  `alive`) plus `captureScreen()`, the display root.
+- **`DisplayAgent`** is a `main` that opens `:N` and serves one request at a time over stdin/stdout; EOF
+  means the parent has gone and it exits. Dying is its feature: when `:N` dies it is the *agent* Xlib exits.
+  **`RemoteDisplay`** is the caller-side proxy — it reads EOF, marks itself dead and degrades every later
+  call to `null`/`0`/empty/no-op, so the death arrives through the path that already existed
+  (`health()` → `NestedSession.closeIfDead`). **`LocalDisplay`** keeps the old in-process behaviour for the
+  agent itself and as a fallback, selectable with `-Dbotmaker.session.display.local=true`.
+- **`DisplayAgentProcess`** spawns it two ways: `$JAVA_HOME/bin/java -cp <our classpath>` first (covers a dev
+  `javafx:run`, a `java -jar` bot and a jpackage app-image), else a re-exec of *this program* with
+  `DisplayAgent.ARG_MARKER` in front — which is why `BotMakerStudio.main` now dispatches on
+  `DisplayAgent.isAgentInvocation` before JavaFX. The child's stderr goes to a **file**, never a pipe: an
+  undrained pipe blocks its writer, and the writer here is the process holding the display.
+- **`AgentProtocol`** is a hand-rolled escaped line protocol, not JSON — this module's footprint is a rule
+  (`CLAUDE.md`), and the payload that matters is a binary frame anyway. Frames travel as PNG (lossless: these
+  are the pixels the vision stack matches templates against).
+- Handles are now plain `Long` ids above the link and JNA `Pointer`s only inside the agent; **`WindowIds`** is
+  the one place that converts, and `LocalDisplay` translates at its boundary. `NestedSession`,
+  `AdoptedSession` and `SessionAttachment` lost their `Pointer` casts and their second X connection —
+  `SessionAttachment`'s constructor is now `(DisplayLink, String)`.
+- `DesktopSession.captureScreen()` added (defaulting to `capture()`), for the Phase 2 pilot work: a frame that
+  does not depend on which window a launcher chain is currently showing.
+
+**Verified**
+- Against a real Xephyr: spawn, enumerate, root capture, `mouseMove`, `cursorPosition`, clean close.
+- Kill the server under a live link → caller logs "the agent closed its output — :N is gone", every later
+  call degrades, and the JVM **survives**. The same program with `-Dbotmaker.session.display.local=true`
+  prints `XIO: fatal IO error` and exits — the reported Studio death, reproduced and then fixed.
+
+**Deferred / next**
+- `DisplayReadiness.await` still opens and closes a short-lived connection to `:N` in the caller's process
+  during bring-up. The window is microseconds wide and predates anything worth crashing over, but it is the
+  last in-process `:N` open and should move behind the agent when convenient.
+- The agent is one process per session. Fine at today's session counts; a shared agent multiplexing displays
+  is the obvious next step if that stops being true.
+
+---
+
 ## 2026-08-06 — `SessionUnit`: the reaper's roles and its unit names are one type
 
 **94 tests (unchanged).** Added: `process/SessionUnit.java`. Changed: `process/SessionReaper.java`,

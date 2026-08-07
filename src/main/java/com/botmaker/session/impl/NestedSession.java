@@ -17,15 +17,13 @@ import com.botmaker.session.process.SessionBus;
 import com.botmaker.session.process.SessionMembers;
 import com.botmaker.session.process.SessionReaper;
 import com.botmaker.session.process.SessionUnit;
+import com.botmaker.session.remote.DisplayLink;
+import com.botmaker.session.remote.WindowIds;
 
 import com.botmaker.shared.Diag;
 import com.botmaker.shared.Executables;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
-import com.botmaker.shared.capture.linux.LinuxController;
-import com.botmaker.shared.capture.linux.input.LinuxInputBackendId;
-import com.botmaker.shared.capture.linux.X11;
-import com.botmaker.shared.capture.linux.X11Utils;
 import com.botmaker.shared.launch.GameLauncher;
 import com.botmaker.shared.launch.HostLauncherProbe;
 import com.botmaker.shared.launch.LaunchCommands;
@@ -33,7 +31,6 @@ import com.botmaker.shared.launch.LaunchIsolation;
 import com.botmaker.shared.launch.LaunchSpec;
 import com.botmaker.shared.launch.Launcher;
 import com.botmaker.shared.platform.SessionEnv;
-import com.sun.jna.Pointer;
 
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
@@ -122,9 +119,12 @@ public final class NestedSession implements DesktopSession {
     private final String id;
     private final SessionReaper reaper;
     private final SessionDisplay display;
-    private final LinuxController controller;
-    /** A second connection to {@code :N} for EWMH reads (pid/geometry), separate from the controller's own. */
-    private final Pointer ewmhDisplay;
+    /**
+     * Everything this session does to {@code :N}, held <b>in another process</b> — see {@link DisplayLink}. It
+     * replaced a {@code LinuxController} plus a second EWMH connection, both open in this JVM, which is what an
+     * X I/O error used to call {@code exit(1)} on.
+     */
+    private final DisplayLink link;
     private final ControllerPointer pointer;
     private final ControllerKeyboard keyboard;
     private final Options options;
@@ -153,26 +153,19 @@ public final class NestedSession implements DesktopSession {
     private volatile boolean closed;
 
     private NestedSession(String id, SessionReaper reaper, SessionDisplay display,
-                          LinuxController controller, Pointer ewmhDisplay, Options options, SessionBus bus) {
+                          DisplayLink link, Options options, SessionBus bus) {
         this.id = id;
         this.reaper = reaper;
         this.display = display;
-        this.controller = controller;
-        this.ewmhDisplay = ewmhDisplay;
+        this.link = link;
         this.options = options;
         this.bus = bus;
-        this.attachment = new SessionAttachment(controller, ewmhDisplay, id + " on " + display.displayName());
-        this.pointer = new ControllerPointer(controller);
-        this.keyboard = new ControllerKeyboard(controller, this::attached);
+        this.attachment = new SessionAttachment(link, id + " on " + display.displayName());
+        this.pointer = new ControllerPointer(link);
+        this.keyboard = new ControllerKeyboard(link, this::attached);
         // The input backend asks for the driven window on every use rather than holding a handle, because
         // attached() re-resolves: the launcher chain routinely swaps the window out from under us.
-        controller.setDrivenWindow(this::attachedHandle);
-    }
-
-    /** The native handle of {@link #attached()}, or {@code null} when nothing is attached (or it has died). */
-    private Pointer attachedHandle() {
-        GenericWindow window = attached();
-        return window == null ? null : (Pointer) window.getNativeHandle();
+        link.setDrivenWindow(this::attachedWindowId);
     }
 
     /**
@@ -194,8 +187,7 @@ public final class NestedSession implements DesktopSession {
         // touches only slices this start doesn't own, so there is nothing for it to serialise against.
         sweepOrphansConcurrently();
         SessionDisplay display = null;
-        LinuxController controller = null;
-        Pointer ewmh = null;
+        DisplayLink link = null;
         SessionBus bus = null;
         try {
             display = startDisplay(reaper, options);
@@ -204,26 +196,23 @@ public final class NestedSession implements DesktopSession {
             bus = SessionBackends.usesPrivateBus(options)
                 ? SessionBus.start(reaper, id, Map.of(SessionEnv.DISPLAY, display.displayName()))
                 : null;
-            // Pin XTest: on a private display device-level input is both accepted and non-intrusive, and the
-            // process-wide botmaker.linux.input property (which steers :0) must not decide :N's backend. The
-            // warp convention comes with the backend — gamescope's Xwayland reads an absolute warp as
-            // window-relative, so its clicks need the focus origin subtracted (SessionBackends.pointerWarpFor).
-            controller = LinuxController.forDisplay(display.displayName(), LinuxInputBackendId.XTEST,
-                SessionBackends.pointerWarpFor(options.backend()),
-                SessionBackends.inputTimingFor(options.backend()));
-            ewmh = X11.INSTANCE.XOpenDisplay(display.displayName());
-            if (ewmh == null) {
-                throw new SessionStartException("could not open a second connection to " + display.displayName());
+            // The connection to :N is opened in a child process (DisplayLink) rather than here: when the
+            // display server dies, Xlib's default I/O handler calls exit(1) in whichever process holds the
+            // connection, and that used to be Studio. The backend travels with it because it fixes the input
+            // policy — XTest pinned, and gamescope's Xwayland reading an absolute warp as window-relative.
+            link = DisplayLink.open(display.displayName(), options.backend());
+            if (link == null) {
+                throw new SessionStartException("could not open " + display.displayName());
             }
-            NestedSession session = new NestedSession(id, reaper, display, controller, ewmh, options, bus);
+            NestedSession session = new NestedSession(id, reaper, display, link, options, bus);
             session.startWindowManager();
             session.hideUntilItHasSomethingToShow();
             return session;
         } catch (SessionStartException e) {
-            cleanupFailedStart(id, reaper, controller, ewmh, bus);
+            cleanupFailedStart(id, reaper, link, bus);
             throw e;
         } catch (Exception e) {
-            cleanupFailedStart(id, reaper, controller, ewmh, bus);
+            cleanupFailedStart(id, reaper, link, bus);
             throw new SessionStartException("nested session start failed: " + e.getMessage(), e);
         }
     }
@@ -253,17 +242,13 @@ public final class NestedSession implements DesktopSession {
      * claim {@link #start} took before it — a session that never came up must not go on sheltering its own slice
      * from the sweep.
      */
-    private static void cleanupFailedStart(String id, SessionReaper reaper, LinuxController controller,
-                                           Pointer ewmh, SessionBus bus) {
+    private static void cleanupFailedStart(String id, SessionReaper reaper, DisplayLink link, SessionBus bus) {
         LIVE.remove(id);
         if (bus != null) {
             try { bus.close(); } catch (Throwable ignored) { }
         }
-        if (ewmh != null) {
-            try { X11.INSTANCE.XCloseDisplay(ewmh); } catch (Throwable ignored) { }
-        }
-        if (controller != null) {
-            try { controller.close(); } catch (Throwable ignored) { }
+        if (link != null) {
+            try { link.close(); } catch (Throwable ignored) { }
         }
         reaper.reap();
     }
@@ -313,7 +298,7 @@ public final class NestedSession implements DesktopSession {
             // mapped until a client maps something on its Xwayland (measured: no WM_STATE, absent from
             // _NET_CLIENT_LIST while empty), so by the time we can find it there is already content and hiding
             // it would hide the launcher.
-            int mapped = SessionHostWindow.mappedCountOn(display.displayName());
+            int mapped = link.mappedCount();
             if (mapped != 0) {
                 Diag.log("[Session] " + id + ": leaving the host window visible — "
                     + (mapped < 0 ? "could not read " + display.displayName() : mapped + " client(s) already on "
@@ -359,7 +344,7 @@ public final class NestedSession implements DesktopSession {
         }
         long deadline = System.currentTimeMillis() + WM_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
-            if (X11Utils.hasWindowManager(ewmhDisplay)) {
+            if (link.hasWindowManager()) {
                 Diag.log("[Session] " + id + ": window manager is up");
                 return;
             }
@@ -521,7 +506,17 @@ public final class NestedSession implements DesktopSession {
         // Through attached(), not the field: a destroyed window otherwise captures null forever while the game
         // is running and capturable one window over.
         GenericWindow target = attached();
-        return target == null ? null : controller.captureWindow(target);
+        return target == null ? null : link.captureWindow(target);
+    }
+
+    /**
+     * The whole nested screen, which — unlike {@link #capture()} — does not depend on the attachment. A store
+     * launcher swapping its own window for the game's is invisible here, so a viewer streaming this keeps
+     * showing the session right through the swap that used to blank it.
+     */
+    @Override
+    public BufferedImage captureScreen() {
+        return link.captureScreen();
     }
 
     @Override
@@ -539,7 +534,7 @@ public final class NestedSession implements DesktopSession {
 
     @Override
     public NativeController controller() {
-        return controller;
+        return link;
     }
 
     @Override
@@ -562,8 +557,7 @@ public final class NestedSession implements DesktopSession {
             output.close();
             Diag.log("[Session] " + id + ": app output kept at " + output.file().getAbsolutePath());
         }
-        try { controller.close(); } catch (Throwable t) { Diag.error("[Session] " + id + ": controller close: " + t.getMessage()); }
-        try { X11.INSTANCE.XCloseDisplay(ewmhDisplay); } catch (Throwable t) { Diag.error("[Session] " + id + ": ewmh close: " + t.getMessage()); }
+        try { link.close(); } catch (Throwable t) { Diag.error("[Session] " + id + ": display link close: " + t.getMessage()); }
         // The bus daemon itself belongs to the reaper (it is in the slice); this only drops its generated files.
         if (bus != null) {
             try { bus.close(); } catch (Throwable t) { Diag.error("[Session] " + id + ": bus close: " + t.getMessage()); }
@@ -657,9 +651,7 @@ public final class NestedSession implements DesktopSession {
      * {@link AdoptedSession#handoffArguments} is the one caller, and Studio has no other reason to know JNA exists.
      */
     public long attachedWindowId() {
-        GenericWindow window = attached();
-        Object handle = window == null ? null : window.getNativeHandle();
-        return handle instanceof Pointer p ? Pointer.nativeValue(p) : 0;
+        return WindowIds.of(attached());
     }
 
     /**
@@ -798,8 +790,8 @@ public final class NestedSession implements DesktopSession {
     /** All window ids currently on the nested display — the "before" snapshot the new-window attach diffs against. */
     private Set<Long> windowIdsOnDisplay() {
         Set<Long> ids = new HashSet<>();
-        for (GenericWindow w : controller.getAllWindows()) {
-            ids.add(handleId(w));
+        for (GenericWindow w : link.getAllWindows()) {
+            ids.add(WindowIds.of(w));
         }
         return ids;
     }
@@ -815,12 +807,12 @@ public final class NestedSession implements DesktopSession {
         while (System.currentTimeMillis() < deadline) {
             Set<Long> pids = subtreePids(proc);
             GenericWindow newest = null;
-            for (GenericWindow w : controller.getAllWindows()) {
-                long pid = X11Utils.getWindowPid(ewmhDisplay, (Pointer) w.getNativeHandle());
+            for (GenericWindow w : link.getAllWindows()) {
+                long pid = link.windowPid(WindowIds.of(w));
                 if (pid > 0 && pids.contains(pid)) {
                     return w; // strongest evidence — this window's own client is our process
                 }
-                if (!before.contains(handleId(w))) {
+                if (!before.contains(WindowIds.of(w))) {
                     newest = w; // last new window wins (the most recently mapped top-level)
                 }
             }
@@ -852,10 +844,6 @@ public final class NestedSession implements DesktopSession {
             // descendants() can race with exit; the pids we already have are enough.
         }
         return pids;
-    }
-
-    private static long handleId(GenericWindow w) {
-        return Pointer.nativeValue((Pointer) w.getNativeHandle());
     }
 
     private static void sleep() {

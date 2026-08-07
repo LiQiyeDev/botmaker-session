@@ -63,6 +63,21 @@ public interface DesktopSession extends AutoCloseable {
     /** A pixel frame of the {@link #attached() attached} window, or {@code null} if none can be produced. */
     BufferedImage capture();
 
+    /**
+     * A pixel frame of the whole session <em>screen</em> at {@link #screen()} — not of one window.
+     *
+     * <p>The difference matters for a launcher chain: {@link #capture()} follows the attachment, so while Heroic
+     * is still up and the game's window has not arrived (or has replaced it), the attachment can be stale or
+     * absent and the frame {@code null}. The screen has no such dependency — whatever is on the display is in
+     * it. A private session hosting one fullscreen client is the common case, where the two are the same pixels.
+     *
+     * <p>The default is {@link #capture()}, so a session with no notion of a screen of its own (the host
+     * desktop) keeps answering exactly as it does today.
+     */
+    default BufferedImage captureScreen() {
+        return capture();
+    }
+
     /** The session's liveness — a nested supervisor reports {@code DEGRADED}/{@code DEAD} for chaos recovery. */
     default SessionHealth health() {
         return SessionHealth.HEALTHY;

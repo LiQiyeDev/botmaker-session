@@ -5,18 +5,15 @@ import com.botmaker.session.DesktopSession;
 import com.botmaker.session.SessionHealth;
 import com.botmaker.session.SessionKeyboard;
 import com.botmaker.session.SessionPointer;
-import com.botmaker.session.display.SessionBackends;
 import com.botmaker.session.input.ControllerKeyboard;
 import com.botmaker.session.input.ControllerPointer;
+import com.botmaker.session.remote.DisplayLink;
+import com.botmaker.session.remote.WindowIds;
 
 import com.botmaker.shared.Diag;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
-import com.botmaker.shared.capture.linux.LinuxController;
-import com.botmaker.shared.capture.linux.input.LinuxInputBackendId;
-import com.botmaker.shared.capture.linux.X11;
 import com.botmaker.shared.launch.LaunchSpec;
-import com.sun.jna.Pointer;
 
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
@@ -56,24 +53,22 @@ public final class AdoptedSession implements DesktopSession {
     public static final String BACKEND_PROPERTY = "botmaker.session.owner.backend";
 
     private final String displayName;
-    private final LinuxController controller;
-    /** A second connection for EWMH/liveness reads, separate from the controller's own. */
-    private final Pointer x11Display;
+    /** Everything this session does to the adopted display, held in another process — see {@link DisplayLink}. */
+    private final DisplayLink link;
     private final SessionAttachment attachment;
     private final ControllerPointer pointer;
     private final ControllerKeyboard keyboard;
     private volatile boolean closed;
 
-    private AdoptedSession(String displayName, LinuxController controller, Pointer x11Display) {
+    private AdoptedSession(String displayName, DisplayLink link) {
         this.displayName = displayName;
-        this.controller = controller;
-        this.x11Display = x11Display;
-        this.attachment = new SessionAttachment(controller, x11Display, "adopted " + displayName);
-        this.pointer = new ControllerPointer(controller);
-        this.keyboard = new ControllerKeyboard(controller, this::attached);
+        this.link = link;
+        this.attachment = new SessionAttachment(link, "adopted " + displayName);
+        this.pointer = new ControllerPointer(link);
+        this.keyboard = new ControllerKeyboard(link, this::attached);
         // Same contract as a nested session: the input backend asks for the driven window on every use, because the
         // attachment re-resolves when the launcher chain swaps windows under us.
-        controller.setDrivenWindow(this::attachedHandle);
+        link.setDrivenWindow(this::attachedWindowId);
     }
 
     /**
@@ -126,21 +121,15 @@ public final class AdoptedSession implements DesktopSession {
             return null;
         }
         String display = displayName.trim();
-        Pointer x11 = X11.INSTANCE.XOpenDisplay(display);
-        if (x11 == null) {
+        DisplayLink link = DisplayLink.open(display, backend);
+        if (link == null || !link.alive()) {
+            if (link != null) {
+                link.close();
+            }
             Diag.log("[Session] can't adopt " + display + ": it doesn't accept a connection (owner gone?)");
             return null;
         }
-        LinuxController controller;
-        try {
-            controller = LinuxController.forDisplay(display, LinuxInputBackendId.XTEST,
-                SessionBackends.pointerWarpFor(backend), SessionBackends.inputTimingFor(backend));
-        } catch (Exception e) {
-            X11.INSTANCE.XCloseDisplay(x11);
-            Diag.error("[Session] can't adopt " + display + ": " + e.getMessage());
-            return null;
-        }
-        AdoptedSession session = new AdoptedSession(display, controller, x11);
+        AdoptedSession session = new AdoptedSession(display, link);
         GenericWindow window = session.windowById(windowId);
         if (window == null) {
             window = session.newestWindow();
@@ -171,12 +160,7 @@ public final class AdoptedSession implements DesktopSession {
     public Rectangle screen() {
         // Read off the display rather than remembered from a launch: the owner chose the size, and we were only
         // told which display to join.
-        try {
-            return new Rectangle(0, 0, X11.INSTANCE.XDisplayWidth(x11Display, 0),
-                X11.INSTANCE.XDisplayHeight(x11Display, 0));
-        } catch (Exception e) {
-            return new Rectangle(0, 0, 0, 0);
-        }
+        return link.screenSize();
     }
 
     @Override
@@ -213,7 +197,13 @@ public final class AdoptedSession implements DesktopSession {
     @Override
     public BufferedImage capture() {
         GenericWindow target = attached();
-        return target == null ? null : controller.captureWindow(target);
+        return target == null ? null : link.captureWindow(target);
+    }
+
+    /** The whole adopted screen — see {@link com.botmaker.session.DesktopSession#captureScreen()}. */
+    @Override
+    public BufferedImage captureScreen() {
+        return link.captureScreen();
     }
 
     @Override
@@ -223,17 +213,12 @@ public final class AdoptedSession implements DesktopSession {
         }
         // We have no process handles here — the display answering a connection is the liveness we can observe, and
         // it is the one that matters: when the owner's server dies, this session is over.
-        Pointer probe = X11.INSTANCE.XOpenDisplay(displayName);
-        if (probe == null) {
-            return SessionHealth.DEAD;
-        }
-        X11.INSTANCE.XCloseDisplay(probe);
-        return SessionHealth.HEALTHY;
+        return link.alive() ? SessionHealth.HEALTHY : SessionHealth.DEAD;
     }
 
     @Override
     public NativeController controller() {
-        return controller;
+        return link;
     }
 
     /** The display this session joined, e.g. {@code ":1"}. */
@@ -251,16 +236,13 @@ public final class AdoptedSession implements DesktopSession {
             return;
         }
         closed = true;
-        try { controller.close(); } catch (Throwable t) { Diag.error("[Session] adopted close: " + t.getMessage()); }
-        try { X11.INSTANCE.XCloseDisplay(x11Display); } catch (Throwable t) {
-            Diag.error("[Session] adopted close (ewmh): " + t.getMessage());
-        }
+        try { link.close(); } catch (Throwable t) { Diag.error("[Session] adopted close: " + t.getMessage()); }
         Diag.log("[Session] released the adopted display " + displayName + " (its owner keeps it)");
     }
 
-    private Pointer attachedHandle() {
-        GenericWindow window = attached();
-        return window == null ? null : (Pointer) window.getNativeHandle();
+    /** The X id of the window this session drives, or {@code 0} — the driven-window origin the input backends read. */
+    private long attachedWindowId() {
+        return WindowIds.of(attached());
     }
 
     /** The window {@code id} names (decimal, or {@code 0x…} hex) among the display's top-levels, or {@code null}. */
@@ -270,9 +252,8 @@ public final class AdoptedSession implements DesktopSession {
             return null;
         }
         try {
-            for (GenericWindow w : controller.getAllWindows(true)) {
-                Object handle = w.getNativeHandle();
-                if (handle instanceof Pointer p && Pointer.nativeValue(p) == wanted) {
+            for (GenericWindow w : link.getAllWindows(true)) {
+                if (WindowIds.of(w) == wanted) {
                     return w;
                 }
             }
@@ -288,7 +269,7 @@ public final class AdoptedSession implements DesktopSession {
     private GenericWindow newestWindow() {
         GenericWindow newest = null;
         try {
-            for (GenericWindow w : controller.getAllWindows()) {
+            for (GenericWindow w : link.getAllWindows()) {
                 newest = w;
             }
         } catch (Exception e) {
@@ -299,16 +280,6 @@ public final class AdoptedSession implements DesktopSession {
 
     /** {@code 0} for anything that isn't a window id — the value no window has. */
     static long parseWindowId(String id) {
-        if (id == null || id.isBlank()) {
-            return 0;
-        }
-        String s = id.trim();
-        try {
-            return s.toLowerCase(java.util.Locale.ROOT).startsWith("0x")
-                ? Long.parseLong(s.substring(2), 16)
-                : Long.parseLong(s);
-        } catch (NumberFormatException e) {
-            return 0;
-        }
+        return WindowIds.parse(id);
     }
 }

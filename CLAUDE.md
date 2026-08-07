@@ -42,6 +42,7 @@ is now the only thing keeping a caller out.
 | `…session.impl` | `NestedSession`, `AdoptedSession`, `HostSession`, `SessionAttachment`, `SessionHostWindow` | `NestedSession`/`AdoptedSession`/`HostSession` are API; the other two are plumbing |
 | `…session.process` | `SessionReaper`, `SessionMembers`, `SessionBus`, `AppOutputLog` | plumbing |
 | `…session.input` | `ControllerPointer`, `ControllerKeyboard` | plumbing |
+| `…session.remote` | `DisplayLink` + `RemoteDisplay`/`LocalDisplay`, `DisplayAgent`, `DisplayAgentProcess`, `AgentProtocol`, `WindowIds` | `DisplayLink`/`WindowIds` are API; the rest is plumbing |
 
 Adding JPMS (`module-info.java` exporting only the root package) is the way to make that enforced rather than
 documented. It is deliberately deferred: shared and JNA would become automatic modules named after their jar
@@ -61,6 +62,12 @@ files, and nothing else in this repo is modular.
   Xephyr for a game is the software-GL crash this auto-selection exists to prevent.
 - **Everything spawned lives in one reap group** (`SessionReaper`, systemd transient scopes under a
   per-session slice), so `close()` takes the whole tree down and a `kill -9`'d JVM leaves no orphans.
+- **The `:N` connection lives in a child process.** Xlib's default *I/O* error handler calls `exit(1)` in
+  whichever process holds the connection, so a dying display server used to kill Studio outright. Everything a
+  session does to `:N` now goes through `remote.DisplayLink`, backed by a `DisplayAgent` child; the proxy reads
+  EOF and degrades instead of dying. Window handles are plain `Long` ids above that seam and JNA `Pointer`s
+  only inside the agent — `remote.WindowIds` is the single converter. `-Dbotmaker.session.display.local=true`
+  restores the in-process connection for bisecting, at the cost of the crash it exists to prevent.
 - **`PointerPolicy`** owns "does this gesture hand the cursor back?" — on the user's desktop yes, inside a
   session no (warping away turns a click into a hover). Both consumers call it; that is the whole point of it
   living here rather than being re-implemented in each.

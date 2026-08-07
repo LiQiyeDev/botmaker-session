@@ -1,12 +1,14 @@
 package com.botmaker.session.impl;
 
+import com.botmaker.session.remote.DisplayLink;
+
 import com.botmaker.shared.capture.GenericWindow;
-import com.botmaker.shared.capture.NativeController;
-import com.sun.jna.Pointer;
 import org.junit.jupiter.api.Test;
 
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -15,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 /**
  * Which window a session drives while the one it attached to is still alive — the launcher-chain promotion.
  *
- * <p>Runs with no X server at all: passing a {@code null} display pointer turns the liveness probe into "never
- * invent a death", which is exactly the state under test. The other half of the type — replacing a window that
+ * <p>Runs with no X server at all: the fake link answers every liveness probe "still there", which is the
+ * "never invent a death" state under test. The other half of the type — replacing a window that
  * really died — is not covered here, because it needs a real display to kill a window on.
  *
  * <p>The live bug these pin: Heroic launching Firestone maps its store page first and keeps it mapped behind the
@@ -75,7 +77,7 @@ class SessionAttachmentTest {
 
     @Test
     void aSessionThatNeverAttachedStaysUnattached() {
-        SessionAttachment attachment = new SessionAttachment(new FakeController(List.of(GAME)), null, "test");
+        SessionAttachment attachment = new SessionAttachment(new FakeLink(List.of(GAME)), "test");
         attachment.followLauncherChain(true);
 
         assertNull(attachment.resolve(), "a failed launch must not be handed the first window on the display");
@@ -83,36 +85,46 @@ class SessionAttachmentTest {
 
     @Test
     void theScanIsRateLimitedSoAStreamingCaptureDoesNotPayForItPerFrame() {
-        CountingController controller = new CountingController(List.of(LAUNCHER, GAME));
-        SessionAttachment attachment = new SessionAttachment(controller, null, "test");
+        CountingLink link = new CountingLink(List.of(LAUNCHER, GAME));
+        SessionAttachment attachment = new SessionAttachment(link, "test");
         attachment.attach(LAUNCHER);
         attachment.followLauncherChain(true);
 
         for (int i = 0; i < 50; i++) {
             attachment.resolve();
         }
-        assertEquals(1, controller.scans, "50 frames inside one interval must cost one window scan");
+        assertEquals(1, link.scans, "50 frames inside one interval must cost one window scan");
     }
 
     private static SessionAttachment attachedTo(GenericWindow window, List<GenericWindow> onDisplay) {
-        SessionAttachment attachment = new SessionAttachment(new FakeController(onDisplay), null, "test");
+        SessionAttachment attachment = new SessionAttachment(new FakeLink(onDisplay), "test");
         attachment.attach(window);
         return attachment;
     }
 
     private static GenericWindow window(long id, String title) {
-        return new GenericWindow(new Pointer(id), title, null);
+        return new GenericWindow(id, title, null);
     }
 
-    /** Minimal {@link NativeController} that only answers {@code getAllWindows}; everything else is a no-op. */
-    private static class FakeController implements NativeController {
+    /** Minimal {@link DisplayLink} that only answers {@code getAllWindows}; everything else is a no-op. */
+    private static class FakeLink implements DisplayLink {
         private final List<GenericWindow> windows;
 
-        FakeController(List<GenericWindow> windows) {
+        FakeLink(List<GenericWindow> windows) {
             this.windows = windows;
         }
 
         @Override public List<GenericWindow> getAllWindows() { return windows; }
+        @Override public String displayName() { return ":test"; }
+        @Override public BufferedImage captureScreen() { return null; }
+        @Override public Rectangle screenSize() { return new Rectangle(); }
+        @Override public boolean windowViewable(long windowId) { return true; }
+        @Override public long windowPid(long windowId) { return 0; }
+        @Override public boolean hasWindowManager() { return false; }
+        @Override public int mappedCount() { return 0; }
+        @Override public boolean alive() { return true; }
+        @Override public void setDrivenWindow(Supplier<Long> windowId) { }
+        @Override public void close() { }
         @Override public GenericWindow getForegroundWindow() { return null; }
         @Override public List<GenericWindow> getChildWindows(GenericWindow parent) { return List.of(); }
         @Override public BufferedImage captureWindow(GenericWindow window) { return null; }
@@ -129,10 +141,10 @@ class SessionAttachmentTest {
     }
 
     /** The same, counting how often the window list is actually asked for. */
-    private static final class CountingController extends FakeController {
+    private static final class CountingLink extends FakeLink {
         private int scans;
 
-        CountingController(List<GenericWindow> windows) {
+        CountingLink(List<GenericWindow> windows) {
             super(windows);
         }
 
