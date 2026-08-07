@@ -16,6 +16,36 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-07 — gamescope is the default backend for every launch kind; Xephyr is a pin
+
+**Why.** `SessionBackends.preferredBackend` chose by `LaunchKind`: gamescope for the game kinds, Xephyr for
+`cli:`/`emu-app:`/unknown. The split bought nothing — "lighter" is not a property anyone measured — and cost
+a second bring-up path that only the *least*-exercised launch kinds ever ran, on the one backend whose
+software GL is what crashes what a session usually hosts. gamescope is also its own window manager (no
+openbox to install or to be missing), owns focus, and forces its client fullscreen, which is what makes a
+session's screen capture and its input geometry agree — the property Studio's pilot now depends on.
+
+**Done**
+- `preferredBackend(spec)` returns `GAMESCOPE` unconditionally (it still takes the spec: the question is
+  per-target, and a future backend for `EMULATOR_APP` would be decided there). `availableBackendFor` therefore
+  goes empty whenever gamescope is missing — the loud-failure signal, never a silent drop to Xephyr.
+- `Backend.XEPHYR` survives **only** as an explicit pin: `Session.useBackend("xephyr")`,
+  `-Dbotmaker.session.backend=xephyr`, or the project's `session.backend` key. `Backend.fromId` is unchanged
+  and still total, so `auto` and typos fall through to the default rather than onto Xephyr.
+- Studio's `BackgroundModeBox` lists gamescope first, preselects it, and its tooltip says what Xephyr is now
+  for (bisecting a gamescope problem). `Options.xephyr(...)`, `windowManagerFor(XEPHYR)` and
+  `revealHostWindow`/`raiseXephyrHostWindow` all stay — the pin has to keep working.
+- Tests restated in both modules: `SessionBackendsTest` asserts the answer over every `LaunchKind`; the SDK's
+  ladder tests now prove fall-through with a *parseable* `xephyr` (the only value a match could produce that
+  the default cannot), which is a sharper assertion than the kind-driven pair it replaced.
+
+**Deferred / next**
+- **Xephyr is deprecated, not removed.** Remove it once a gamescope-only run has soaked: `NestedDisplay`,
+  `SessionHostWindow`'s raise path, `windowManagerFor`, the openbox dependency and the `xephyr` wire id all go
+  with it. Keep the wire id parsing forever if any project file ever stored it.
+
+---
+
 ## 2026-08-07 — the `:N` connection moves out of process (`com.botmaker.session.remote`)
 
 **The bug.** Closing a game's window took Studio down with it. Not the reaper, not the slice: an untrapped

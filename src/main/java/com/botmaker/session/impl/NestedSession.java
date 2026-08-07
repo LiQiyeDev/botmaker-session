@@ -889,10 +889,10 @@ public final class NestedSession implements DesktopSession {
 
         /**
          * Parses a backend {@link #id()} — total, and empty for anything that isn't one, which includes
-         * {@code null}, blank and the explicit {@code "auto"}. Empty therefore means <em>"no override, choose by
-         * launch kind"</em> ({@link SessionBackends#preferredBackend}), never a silent fallback to a particular
-         * backend: mapping an unrecognised value onto Xephyr is exactly the software-GL crash the kind-driven
-         * choice exists to avoid.
+         * {@code null}, blank and the explicit {@code "auto"}. Empty therefore means <em>"no override, use the
+         * default"</em> ({@link SessionBackends#preferredBackend}, which is gamescope), never a silent fallback
+         * to a particular backend: mapping an unrecognised value onto Xephyr is exactly the software-GL crash
+         * that default exists to avoid. {@link #XEPHYR} is reachable only by naming it explicitly.
          */
         public static java.util.Optional<Backend> fromId(String id) {
             if (id == null || id.isBlank()) {

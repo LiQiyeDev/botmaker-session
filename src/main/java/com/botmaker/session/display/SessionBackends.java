@@ -19,11 +19,16 @@ import java.util.function.Predicate;
  * rule: anything the SDK and Studio would each otherwise compute — backend choice, availability, the install
  * hint — belongs in shared so the two can't drift.
  *
- * <p><b>Why the choice is kind-driven.</b> A store launcher (Steam/Epic/Heroic/Faugus) and the Proton game
- * behind it — and a native {@code exe} game — boot a real GPU stack (Electron/Chromium, Vulkan/GL). Under
- * Xephyr's <em>software</em> GL that stack aborts (the observed Heroic SIGTRAP), so those kinds need
- * {@link NestedSession.Backend#GAMESCOPE}, which puts a real GPU inside the private display. A plain
- * {@code cli:} command has no such need and stays on the lighter {@link NestedSession.Backend#XEPHYR}.
+ * <p><b>gamescope is the answer for every kind.</b> A store launcher (Steam/Epic/Heroic/Faugus) and the Proton
+ * game behind it — and a native {@code exe} game — boot a real GPU stack (Electron/Chromium, Vulkan/GL). Under
+ * Xephyr's <em>software</em> GL that stack aborts (the observed Heroic SIGTRAP), so those kinds have always
+ * needed {@link NestedSession.Backend#GAMESCOPE}, which puts a real GPU inside the private display. The choice
+ * used to be kind-driven, leaving a plain {@code cli:} command on the lighter
+ * {@link NestedSession.Backend#XEPHYR} — but "lighter" bought nothing and cost a second code path that only the
+ * least-exercised launch kinds ran: gamescope is its own window manager (no openbox to install or lose), owns
+ * focus, and forces its client fullscreen, which is what makes the session's screen capture and its input
+ * geometry agree. Xephyr survives only behind an explicit {@code BotSettings} pin, for bisecting a gamescope
+ * problem; see {@code ROADMAP.md} for the deprecation.
  *
  * <p><b>No silent Xephyr fallback for a game.</b> When a game's required backend (gamescope) isn't on
  * {@code PATH}, {@link #availableBackendFor(LaunchSpec)} is empty — the loud-failure signal. Callers surface
@@ -34,20 +39,16 @@ public final class SessionBackends {
     private SessionBackends() {}
 
     /**
-     * The backend a target of this {@code spec} wants, irrespective of what's installed: game kinds
-     * ({@link LaunchKind#STEAM STEAM}, {@link LaunchKind#EPIC EPIC}, {@link LaunchKind#HEROIC HEROIC},
-     * {@link LaunchKind#FAUGUS FAUGUS}, {@link LaunchKind#EXE EXE}) → {@link NestedSession.Backend#GAMESCOPE};
-     * everything else ({@link LaunchKind#CLI CLI}, {@link LaunchKind#EMULATOR_APP EMULATOR_APP},
-     * {@link LaunchKind#UNKNOWN UNKNOWN}, and a {@code null} spec) → {@link NestedSession.Backend#XEPHYR}.
+     * The backend a target of this {@code spec} wants, irrespective of what's installed:
+     * {@link NestedSession.Backend#GAMESCOPE}, for every {@link LaunchKind} and for a {@code null} spec.
+     *
+     * <p>It takes the spec anyway because the question is genuinely per-target — a future backend chosen for,
+     * say, {@link LaunchKind#EMULATOR_APP EMULATOR_APP} would be decided here — and because every caller already
+     * has a spec in hand. What it must <em>not</em> do again is answer {@link NestedSession.Backend#XEPHYR} for
+     * the kinds nobody tests: see the class javadoc.
      */
     public static NestedSession.Backend preferredBackend(LaunchSpec spec) {
-        if (spec == null) {
-            return NestedSession.Backend.XEPHYR;
-        }
-        return switch (spec.kind()) {
-            case STEAM, EPIC, HEROIC, FAUGUS, EXE -> NestedSession.Backend.GAMESCOPE;
-            case CLI, EMULATOR_APP, UNKNOWN -> NestedSession.Backend.XEPHYR;
-        };
+        return NestedSession.Backend.GAMESCOPE;
     }
 
     /**

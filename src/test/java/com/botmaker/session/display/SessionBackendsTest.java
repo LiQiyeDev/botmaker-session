@@ -28,24 +28,16 @@ class SessionBackendsTest {
     }
 
     @Test
-    void gameKindsPreferGamescope() {
-        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(LaunchKind.STEAM, "570")));
-        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(LaunchKind.EPIC, "Fortnite")));
-        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(LaunchKind.HEROIC, "Firestone")));
-        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(LaunchKind.FAUGUS, "battlenet")));
-        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(LaunchKind.EXE, "/usr/bin/game")));
+    void everyLaunchKindPrefersGamescope() {
+        for (LaunchKind kind : LaunchKind.values()) {
+            assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(kind, "token")),
+                    kind + " must resolve to gamescope — Xephyr is reachable only through the explicit pin");
+        }
     }
 
     @Test
-    void cliAndEmulatorAndUnknownStayOnXephyr() {
-        assertEquals(NestedSession.Backend.XEPHYR, SessionBackends.preferredBackend(spec(LaunchKind.CLI, "echo hi")));
-        assertEquals(NestedSession.Backend.XEPHYR, SessionBackends.preferredBackend(spec(LaunchKind.EMULATOR_APP, "com.app@Pie64")));
-        assertEquals(NestedSession.Backend.XEPHYR, SessionBackends.preferredBackend(spec(LaunchKind.UNKNOWN, "whatever")));
-    }
-
-    @Test
-    void nullSpecDefaultsToXephyr() {
-        assertEquals(NestedSession.Backend.XEPHYR, SessionBackends.preferredBackend(null));
+    void nullSpecDefaultsToGamescope() {
+        assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(null));
     }
 
     @Test
@@ -53,20 +45,19 @@ class SessionBackendsTest {
         Predicate<String> installed = onPath("gamescope", "Xephyr");
         assertEquals(Optional.of(NestedSession.Backend.GAMESCOPE),
                 SessionBackends.availableBackendFor(spec(LaunchKind.HEROIC, "Firestone"), installed));
-        assertEquals(Optional.of(NestedSession.Backend.XEPHYR),
+        assertEquals(Optional.of(NestedSession.Backend.GAMESCOPE),
                 SessionBackends.availableBackendFor(spec(LaunchKind.CLI, "echo hi"), installed));
     }
 
     @Test
-    void emptyWhenAGameNeedsGamescopeButItIsMissing() {
-        // Only Xephyr installed: a game (wants gamescope) has no available backend — the loud-failure signal,
-        // never a silent drop to the Xephyr that would crash it.
+    void emptyWhenGamescopeIsMissing() {
+        // Only Xephyr installed: nothing has an available backend — the loud-failure signal, never a silent
+        // drop to the Xephyr whose software GL is what crashes a game.
         Predicate<String> onlyXephyr = onPath("Xephyr");
         assertTrue(SessionBackends.availableBackendFor(spec(LaunchKind.HEROIC, "Firestone"), onlyXephyr).isEmpty());
-        // A cli target is fine on the installed Xephyr.
-        assertEquals(Optional.of(NestedSession.Backend.XEPHYR),
-                SessionBackends.availableBackendFor(spec(LaunchKind.CLI, "echo hi"), onlyXephyr).map(b -> b));
-        assertFalse(SessionBackends.availableBackendFor(spec(LaunchKind.CLI, "echo hi"), onlyXephyr).isEmpty());
+        assertTrue(SessionBackends.availableBackendFor(spec(LaunchKind.CLI, "echo hi"), onlyXephyr).isEmpty());
+        assertFalse(SessionBackends.availableBackendFor(spec(LaunchKind.CLI, "echo hi"),
+                onPath("gamescope")).isEmpty());
     }
 
     @Test
