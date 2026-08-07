@@ -29,10 +29,14 @@ import javax.imageio.ImageIO;
  * empty answer for its type. That is deliberate: the display really is gone, and the caller already has a path
  * for that ({@code health()} → {@link NestedSession#closeIfDead()}). Throwing would only relocate the crash.
  *
- * <p><b>The driven window is resolved outside the lock.</b> A session's driven-window supplier resolves its
- * attachment, which calls back into this link to enumerate windows; evaluating it inside the request lock would
- * deadlock on the first input call. So {@link #syncDrivenWindow()} runs before the lock is taken, and only
- * sends a {@code driven} request when the answer actually changed.
+ * <p><b>The driven window is resolved outside the lock, and never re-entered.</b> A session's driven-window
+ * supplier resolves its attachment, which calls back into this link to enumerate windows and probe whether the
+ * attached one is still viewable. Evaluating it inside the request lock would deadlock on the first input call,
+ * so {@link #syncDrivenWindow()} runs before the lock is taken — but that callback also re-enters the sync, and
+ * unbounded it recurses until the stack is gone (it did: a launcher-chain attach overflowed on the first call
+ * after the attach). So the sync is skipped while this thread is already inside it: the nested call goes out
+ * with the driven window the agent was last told, which is right, because the outer call is on its way to
+ * sending the fresh one. Only a real change costs a {@code driven} round trip.
  */
 public final class RemoteDisplay implements DisplayLink {
 
@@ -46,6 +50,12 @@ public final class RemoteDisplay implements DisplayLink {
     private volatile Supplier<Long> drivenWindow;
     /** The id last pushed to the agent, so an unchanged driven window costs no round trip. */
     private volatile long sentDrivenWindow = -1;
+    /**
+     * Set while <em>this thread</em> is resolving the driven window — see the class note. Per-thread rather than
+     * one flag, because the sync deliberately runs outside the request lock: two threads can be in it at once,
+     * and a shared flag would silently drop the other thread's real sync instead of just its recursion.
+     */
+    private final ThreadLocal<Boolean> resolvingDrivenWindow = ThreadLocal.withInitial(() -> false);
     private volatile boolean dead;
     private volatile boolean closed;
 
@@ -363,19 +373,23 @@ public final class RemoteDisplay implements DisplayLink {
 
     /**
      * Push the driven window to the agent when it has changed. Runs <b>outside</b> the request lock on purpose:
-     * the supplier resolves the session's attachment, which enumerates windows through this very link.
+     * the supplier resolves the session's attachment, which enumerates and probes windows through this very
+     * link — and is therefore a no-op when that resolution is what got us here. See the class note.
      */
     private void syncDrivenWindow() {
         Supplier<Long> supplier = drivenWindow;
-        if (supplier == null) {
+        if (supplier == null || resolvingDrivenWindow.get()) {
             return;
         }
         long id;
+        resolvingDrivenWindow.set(true);
         try {
             Long value = supplier.get();
             id = value == null ? 0 : value;
         } catch (Exception e) {
             return;
+        } finally {
+            resolvingDrivenWindow.set(false);
         }
         if (id != sentDrivenWindow) {
             sentDrivenWindow = id;

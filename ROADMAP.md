@@ -16,6 +16,35 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — the driven-window sync stopped recursing into itself
+
+**Why.** Launching a Heroic-routed game (Firestone) into a gamescope session died with a `StackOverflowError`
+the moment the session attached to the launcher's window: `RemoteDisplay.call` → `syncDrivenWindow` →
+`NestedSession.attachedWindowId` → `SessionAttachment.resolve` → `isViewable` → `RemoteDisplay.windowViewable`
+→ `call` → … forever. The callback was known and documented — moving the supplier *outside* the request lock
+is what keeps it from deadlocking — but nothing bounded it, and since "prove the host window is ours, and
+follow the launcher chain" the supplier's own path hits the link twice (`windowViewable`, and `getAllWindows`
+via `promoted()` once `followLauncherChain` is armed). `sentDrivenWindow` couldn't break the cycle: it is
+only written *after* the supplier returns, which it never did.
+
+**Done**
+- `RemoteDisplay.syncDrivenWindow()` is now a no-op while the same thread is already inside it
+  (`ThreadLocal<Boolean> resolvingDrivenWindow`, set around `supplier.get()` in a `try/finally`). The nested
+  call goes out with the id the agent was last told, which is correct — the outer call is on its way to
+  sending the fresh one. Per-thread rather than one flag because the sync runs outside the request lock, so
+  two threads can legitimately be in it at once.
+- The class javadoc paragraph now states both halves of the contract (outside the lock *and* never
+  re-entered) rather than only the deadlock half.
+- No change in `SessionAttachment`/`NestedSession`/`AdoptedSession` — the callback into the link is the
+  design there, and `AdoptedSession` wires the same supplier, so it inherits the fix.
+
+**Deferred / next**
+- No regression test: `RemoteDisplay` is only constructible through a spawned `DisplayAgentProcess`, so
+  pinning this needs a test seam (a package-private factory over a fake agent process) that doesn't exist
+  yet. Worth adding the next time this class is opened — recursion bugs regress silently.
+
+---
+
 ## 2026-08-07 — gamescope is the default backend for every launch kind; Xephyr is a pin
 
 **Why.** `SessionBackends.preferredBackend` chose by `LaunchKind`: gamescope for the game kinds, Xephyr for
