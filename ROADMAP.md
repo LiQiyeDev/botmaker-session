@@ -16,6 +16,18 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — a launch prepares the host before it builds an argv
+
+**Done**
+
+- `NestedSession.launchAndAttach` calls `LaunchPreparation.prepare(spec, display.width(), display.height())`
+  before the ladder. For Waydroid that makes the container's own framebuffer match the display it is about to
+  render into — the step that makes the private display's grab 1:1 rather than letterboxed. Every other kind
+  prepares nothing. It runs ahead of `stopHostInstance` so the container it may cycle is the one being stopped
+  anyway.
+
+---
+
 ## 2026-08-08 — Waydroid runs on a private display, at the resolution the project asked for
 
 Waydroid was black in the pilot and took ~1 s a frame, because every one of its frames came from ADB

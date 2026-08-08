@@ -37,6 +37,7 @@ import com.botmaker.shared.launch.LaunchKind;
 import com.botmaker.shared.launch.HostLauncherProbe;
 import com.botmaker.shared.launch.LaunchCommands;
 import com.botmaker.shared.launch.LaunchIsolation;
+import com.botmaker.shared.launch.LaunchPreparation;
 import com.botmaker.shared.launch.LaunchSpec;
 import com.botmaker.shared.launch.Launcher;
 import com.botmaker.shared.platform.SessionEnv;
@@ -534,6 +535,10 @@ public final class NestedSession implements DesktopSession {
             Diag.error("[Session] " + id + ": " + verdict.reason());
             return;
         }
+        // Before the argv, because the one thing a launch changes about the host cannot be passed on a command
+        // line: Waydroid's framebuffer size is a persistent Android property read only at container start. Done
+        // ahead of stopHostInstance so the container it cycles is the one we're about to stop anyway.
+        LaunchPreparation.prepare(spec, display.width(), display.height());
         // Only the forms that exist here: the ladder's missing rungs would each be spawned, exit at once, and be
         // reported as a window timeout they never waited for.
         // Sized: an emulator app's rung is the compositor Android renders into, so it must match this display
