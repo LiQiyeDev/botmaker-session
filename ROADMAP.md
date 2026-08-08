@@ -16,6 +16,51 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — the scale filter that wasn't scaling, and a cursor for `:N`
+
+The fidelity probe's first baseline said the H.264 path was *worse* than the JPEG floor it replaces on
+pixel-fine content — 12.9 dB against 34.0. It was, and the cause was not the encoder.
+
+**Done**
+
+- **No `-vf` when the surface needs no resize** (`FfmpegVideoStream.command`). swscale's `fast_bilinear`
+  is not a pass-through at 1:1: on a 1280×720 session (where `fit` is the identity) it cost **33 dB** of
+  pixel-fine detail for a resize that was not happening, while moving the smooth regions by 0.15 dB. Live
+  after the fix: checkerboard 12.9 → **38.9 dB**, whole frame 22.8 → **42.3 dB**, and H.264 now beats
+  JPEG in *every* region. The guard is on the sizes, not on "did `maxEdge` apply" — `fit` also rounds an
+  odd dimension down (4:2:0 cannot encode one) and a rounding is a real resize.
+- **`bicubic` instead of `fast_bilinear`** when there *is* a downscale (`SCALER`). Measured on a genuine
+  0.67× reduction all four kernels are within 0.6 dB, while `fast_bilinear` saves ~1 ms per frame at
+  200 fps — nothing at 24. The cheap kernel bought a saving nobody can spend.
+- **How it was found**, because the method is the reusable part: the error was `r:12.946840 g:12.946842
+  b:12.946836`, and three channels agreeing to six digits is not quantisation noise. Re-encoding the same
+  captured frame offline through every candidate (NVENC p1/p4/p5, CBR 6M/12M, VBR, libx264) put the band
+  at 46–51 dB in all of them. Adding the one filter reproduced the live number exactly: 12.93 vs 12.95.
+- **`:N` gets an ordinary arrow cursor** (`LocalDisplay.open` → `setRootCursor`, with `XCreateFontCursor`
+  / `XDefineCursor` / `XFreeCursor` added to shared's `X11`). A bare X server's root cursor is
+  `XC_X_cursor`, the black cross; on `:0` a desktop environment replaces it at login, and a private
+  display has none — nor, for an emulator session, even a window manager. Purely cosmetic (`-draw_mouse 0`
+  kept it out of the stream) but it read as a broken session. In `LocalDisplay` rather than `DisplayAgent`
+  so it covers both topologies, and best-effort so a session never fails to start over a cursor.
+- **`RootCursorLiveTest`** — because the best-effort `catch (Throwable)` that makes the above safe would
+  equally hide a mistyped JNA signature. The test calls the bindings against a real `:N` and `XSync`s, so
+  a link error is a failure rather than a log line.
+- **`SessionBackends.DisplaySize` + `SizeSource` + `sizeFor` + `FIXED_SIZE_NOTE`** — a display's size *and
+  where it came from*. Three call sites (Studio's `BackgroundLauncher`, its `BackgroundModeBox`, the SDK's
+  `SessionBootstrap`) each had the "project resolution, else the default" rule, and the box resolved its
+  fallback before handing the numbers down — so nothing downstream could tell an authored 1280×720 from an
+  unauthored one, and no surface could explain why the display is the size it is. Studio's status line now
+  says the size and its source with the full explanation on hover; a bot logs the same at bring-up.
+
+**Deferred / next**
+
+- The fixed size is now legible but still only changeable via the project's reference resolution. That is
+  the right constraint (see `NestedDisplay.startXephyr`) — revisit only if a real workflow needs otherwise.
+- Re-run the probe at `-Dbotmaker.fidelity.size=1080x1920` to baseline the portrait downscale, which is the
+  one case the identity-guard does not cover.
+
+---
+
 ## 2026-08-08 — the pilot's picture has a number now (`FidelityProbeTest`)
 
 "Does the pilot look right" had no answer, because it is two questions with opposite ones. The new
@@ -47,12 +92,16 @@ live-gated harness separates them and treats them differently — geometry asser
 on game-like content **H.264 beats JPEG** (46.8 dB vs 43.3, at a fraction of the bytes), and on pixel-fine
 detail it is far worse (12.9 dB vs 34.0) — `-preset p1 -rc cbr -b:v 6M` flattens a 1px pattern completely.
 In a session that is thin UI rules and small text, and it is the first thing to suspect behind a "glitchy"
-Waydroid screen that does not actually tear: **blur from the encoder settings, not tearing from the grab.**
+Waydroid screen that does not actually tear.
+
+> **Corrected the same day** — see the entry above. The symptom was real and the localisation ("blur, not
+> tearing") held, but the attribution to the encoder settings was wrong: it was a `fast_bilinear` scale
+> filter running at 1:1. Every encoder candidate put that band at 46–51 dB. Left here because the wrong
+> guess is instructive — the numbers said "the encode", and only re-running the encode *without the rest of
+> the command* said which part of it.
 
 **Deferred / next**
 
-- Act on that: try `flags=bicubic` in place of `fast_bilinear`, a higher `MAX_EDGE` for sessions, or a
-  quality-targeted rate control for a mostly-static screen. Re-run the probe against this baseline.
 - The out-of-process seam (`DisplayAgent`, `AgentProtocol`, `DisplayAgentProcess`, `RemoteDisplay`,
   `LocalDisplay`) still has no tests — see the inventory audit note.
 

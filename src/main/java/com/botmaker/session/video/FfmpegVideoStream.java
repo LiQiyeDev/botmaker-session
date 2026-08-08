@@ -253,6 +253,21 @@ public final class FfmpegVideoStream implements VideoStream {
      * own size and its offset is <em>not</em> passed as {@code +x,y} — that syntax crops the root, whereas a
      * window grab is already in the window's own coordinates.
      */
+    /**
+     * The swscale kernel used <em>when there is actually a downscale</em>. It was {@code fast_bilinear}, and
+     * that was measured to be a bad trade in both directions.
+     *
+     * <p>Downscaling, the four kernels are indistinguishable on this content — a 1px pattern cannot survive a
+     * 0.67× reduction whoever does it (5.7 dB against 6.0) and a smooth gradient moves by half a decibel
+     * (40.3 against 40.9) — while {@code fast_bilinear} saves about 1 ms per frame at 200 fps, which is
+     * nothing at the 24 fps this runs at. So the cheap kernel buys a saving nobody can spend and gives up the
+     * only measurable difference there is.
+     *
+     * <p>What made it worth changing is the case where it was not scaling at all: see the {@code resizing}
+     * guard in {@link #command}.
+     */
+    static final String SCALER = "bicubic";
+
     static List<String> command(Encoder encoder, String display, PaintedSurface target, int maxEdge, int fps) {
         Rectangle rect = target.rect();
         int[] size = fit(rect.width, rect.height, maxEdge);
@@ -270,12 +285,26 @@ public final class FfmpegVideoStream implements VideoStream {
             cmd.addAll(List.of("-window_id", String.valueOf(target.windowId())));
         }
         cmd.addAll(List.of("-i", display));
+        // No scale filter when nothing is being scaled. This is not a micro-optimisation: swscale's
+        // fast_bilinear is *not* a pass-through at 1:1, and it cost 33 dB on pixel-fine detail for nothing.
+        // Measured on a session already at the cap (1280x720, so fit() was the identity): the checkerboard
+        // band came back at 12.9 dB with the filter and 46.4 dB without it, while the smooth regions moved by
+        // 0.15 dB — i.e. the loss was entirely in the detail a filter at 1:1 has no business touching. On a
+        // real screen that is thin UI rules and small text going soft, which is what a "glitchy but not torn"
+        // session looks like. See FidelityProbeTest and docs/display-pipeline.md §10.
+        //
+        // fit() can still return a different size without a downscale — it rounds an odd dimension down,
+        // because 4:2:0 cannot encode one — so the condition is the sizes, never "did maxEdge apply".
+        boolean resizing = size[0] != rect.width || size[1] != rect.height;
         if (encoder == Encoder.VAAPI) {
             // The scale has to happen on the GPU side of the upload, or the upload is of a full-size frame.
-            cmd.addAll(List.of("-vf", "format=nv12,hwupload,scale_vaapi=" + size[0] + ":" + size[1]));
-        } else {
-            cmd.addAll(List.of("-vf", "scale=" + size[0] + ":" + size[1] + ":flags=fast_bilinear",
+            cmd.addAll(List.of("-vf", "format=nv12,hwupload"
+                    + (resizing ? ",scale_vaapi=" + size[0] + ":" + size[1] : "")));
+        } else if (resizing) {
+            cmd.addAll(List.of("-vf", "scale=" + size[0] + ":" + size[1] + ":flags=" + SCALER,
                     "-pix_fmt", "yuv420p"));
+        } else {
+            cmd.addAll(List.of("-pix_fmt", "yuv420p"));
         }
         cmd.addAll(List.of("-c:v", encoder.codecName));
         cmd.addAll(encoder.extra);

@@ -145,6 +145,36 @@ class SessionBackendsTest {
         assertTrue(SessionBackends.installHint(NestedSession.Backend.XEPHYR).toLowerCase().contains("xephyr"));
     }
 
+    @Test
+    void aDisplaySizeSaysWhereItCameFromAndNotJustHowBig() {
+        SessionBackends.DisplaySize authored = SessionBackends.sizeFor(1080, 1920);
+        assertEquals(1080, authored.width());
+        assertEquals(1920, authored.height());
+        assertEquals(SessionBackends.SizeSource.PROJECT, authored.source());
+
+        // The point of the type: an unauthored project reaches the same shape of answer, and the *source* is
+        // what separates them. Studio's background-mode box used to resolve this fallback before handing the
+        // numbers down, so nothing downstream could tell an authored 1280x720 from an unauthored one — and the
+        // status line could not explain why the display is the size it is.
+        for (int[] unusable : new int[][]{{0, 0}, {-1, 720}, {1280, 0}}) {
+            SessionBackends.DisplaySize fallback = SessionBackends.sizeFor(unusable[0], unusable[1]);
+            assertEquals(SessionBackends.DEFAULT_WIDTH, fallback.width());
+            assertEquals(SessionBackends.DEFAULT_HEIGHT, fallback.height());
+            assertEquals(SessionBackends.SizeSource.FALLBACK, fallback.source());
+        }
+    }
+
+    @Test
+    void describeCarriesBothNumbersAndTheReason() {
+        // It goes straight into a status line and a bot's log, so both halves have to survive: a user reading
+        // "1080x1920" alone learns nothing about why dragging the window does nothing.
+        String authored = SessionBackends.sizeFor(1080, 1920).describe();
+        assertTrue(authored.contains("1080") && authored.contains("1920"), authored);
+        assertTrue(authored.contains("reference resolution"), authored);
+        assertTrue(SessionBackends.sizeFor(0, 0).describe().contains("no reference resolution set"));
+        assertTrue(SessionBackends.FIXED_SIZE_NOTE.contains("reference resolution"));
+    }
+
     private static Predicate<String> onPath(String... installed) {
         Set<String> present = Set.of(installed);
         return present::contains;

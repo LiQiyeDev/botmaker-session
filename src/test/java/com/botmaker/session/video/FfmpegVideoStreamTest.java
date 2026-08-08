@@ -63,7 +63,7 @@ class FfmpegVideoStreamTest {
                 FfmpegVideoStream.Encoder.X264)) {
             List<String> cmd = FfmpegVideoStream.command(encoder, ":9", root(1920, 1080), 1280, 24);
 
-            assertEquals("scale=1280:720:flags=fast_bilinear", argAfter(cmd, "-vf"), encoder.toString());
+            assertEquals("scale=1280:720:flags=bicubic", argAfter(cmd, "-vf"), encoder.toString());
             assertEquals("yuv420p", argAfter(cmd, "-pix_fmt"), encoder.toString());
         }
     }
@@ -106,8 +106,8 @@ class FfmpegVideoStreamTest {
         // The grab is the window's own size, not the display's, and its offset is not passed: +x,y crops the
         // root, whereas a window grab already arrives in the window's own coordinates.
         assertEquals("1280x661", argAfter(cmd, "-video_size"));
-        assertEquals("scale=1280:660:flags=fast_bilinear", argAfter(cmd, "-vf"),
-                "661 is odd and 4:2:0 cannot encode it");
+        assertEquals("scale=1280:660:flags=bicubic", argAfter(cmd, "-vf"),
+                "661 is odd and 4:2:0 cannot encode it — a rounding is still a resize, so the filter stays");
     }
 
     /**
@@ -122,10 +122,29 @@ class FfmpegVideoStreamTest {
         assertEquals("1920x1080", argAfter(cmd, "-video_size"));
     }
 
+    /**
+     * A surface that needs no resize gets <b>no scale filter at all</b> — the test whose name said this all
+     * along while it asserted the opposite.
+     *
+     * <p>It is not tidiness. swscale's {@code fast_bilinear} is not a pass-through at 1:1: measured on a
+     * 1280x720 session (where {@code fit} is the identity), the 1px checkerboard band of the fidelity pattern
+     * came back at 12.9 dB with the filter and 46.4 dB without, while the smooth regions moved by 0.15 dB. On
+     * a real screen that 33 dB is thin UI rules and small text going soft — a session that looks wrong without
+     * ever tearing. See {@code FidelityProbeTest}.
+     */
     @Test
     void aDisplayTooSmallToScaleIsPassedThroughUnscaled() {
         List<String> cmd = FfmpegVideoStream.command(FfmpegVideoStream.Encoder.X264, ":9", root(800, 600), 1280, 24);
 
-        assertEquals("scale=800:600:flags=fast_bilinear", argAfter(cmd, "-vf"));
+        assertFalse(cmd.contains("-vf"), "nothing is being scaled, so nothing should be filtered: " + cmd);
+        assertEquals("yuv420p", argAfter(cmd, "-pix_fmt"), "the pixel format is still ours to state");
+    }
+
+    /** The same, on the VAAPI path: the upload stays, the scale goes. */
+    @Test
+    void theVaapiPathUploadsWithoutScalingWhenThereIsNothingToScale() {
+        List<String> cmd = FfmpegVideoStream.command(FfmpegVideoStream.Encoder.VAAPI, ":9", root(800, 600), 1280, 24);
+
+        assertEquals("format=nv12,hwupload", argAfter(cmd, "-vf"));
     }
 }

@@ -38,6 +38,67 @@ public final class SessionBackends {
 
     private SessionBackends() {}
 
+    /** Nested display size when nothing authored one. See {@link #sizeFor}. */
+    public static final int DEFAULT_WIDTH = 1280;
+    public static final int DEFAULT_HEIGHT = 720;
+
+    /** Where a display's size came from — the half of {@link DisplaySize} a user needs and a number can't carry. */
+    public enum SizeSource {
+        /** The project's reference resolution: what every template was captured at. */
+        PROJECT,
+        /** Nothing authored one, so {@link #DEFAULT_WIDTH}×{@link #DEFAULT_HEIGHT}. */
+        FALLBACK
+    }
+
+    /**
+     * A private display's size <em>and where it came from</em> — the answer to "why can't I resize this?".
+     *
+     * <p>The size itself was never the problem; three call sites already computed the same "project resolution,
+     * else the default" and got the same numbers. What they each threw away was the <em>source</em>, and the
+     * source is the whole of the explanation: a display at the project's reference resolution is fixed on
+     * purpose and changing it means changing the project, while a display at the fallback is fixed because
+     * nobody said otherwise. Those need different sentences, and a bare {@code int[2]} can produce neither.
+     */
+    public record DisplaySize(int width, int height, SizeSource source) {
+
+        /** e.g. {@code "1080×1920 (the project's reference resolution)"} — for a status line or a log. */
+        public String describe() {
+            return width + "×" + height + " (" + switch (source) {
+                case PROJECT -> "the project's reference resolution";
+                case FALLBACK -> "the default — no reference resolution set for this project";
+            } + ")";
+        }
+    }
+
+    /**
+     * {@code w}×{@code h} when both are positive, else the fallback — carrying which of the two it was.
+     *
+     * <p>Here rather than in each consumer for the usual reason: Studio's background launcher, its
+     * background-mode box and the SDK's bootstrap all had this rule, and the box's copy resolved the fallback
+     * <em>before</em> handing the numbers down, so the launcher's copy could never tell an authored 1280×720
+     * from an unauthored one and neither could anything downstream.
+     */
+    public static DisplaySize sizeFor(int w, int h) {
+        return w > 0 && h > 0
+                ? new DisplaySize(w, h, SizeSource.PROJECT)
+                : new DisplaySize(DEFAULT_WIDTH, DEFAULT_HEIGHT, SizeSource.FALLBACK);
+    }
+
+    /**
+     * Why a private display cannot be resized by dragging it — the sentence the UI shows next to
+     * {@link DisplaySize#describe()}.
+     *
+     * <p>It is one string here because it is one fact, and because it is the answer to a question users ask of
+     * whichever surface is in front of them. The behaviour it explains is deliberate and measured: see
+     * {@code NestedDisplay.startXephyr}, which omits {@code -resizeable} because a window manager clamping the
+     * Xephyr window shrank the framebuffer with it and a session claiming 1080×1920 handed back 1080×661 frames.
+     */
+    public static final String FIXED_SIZE_NOTE =
+            "A private display keeps this size for the life of the session — it is what the project's templates "
+            + "were captured at, so it is not the desktop's to negotiate. Resizing the Xephyr window does not "
+            + "change it (the pixels behind the window are all still there). To change it, set the project's "
+            + "reference resolution and start the session again.";
+
     /**
      * The backend a target of this {@code spec} wants, irrespective of what's installed:
      * {@link NestedSession.Backend#GAMESCOPE} for a game and for a {@code null} spec,

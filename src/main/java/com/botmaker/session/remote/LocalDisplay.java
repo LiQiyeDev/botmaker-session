@@ -70,7 +70,38 @@ public final class LocalDisplay implements DisplayLink {
             Diag.error("[Session] cannot open a second connection to " + display);
             return null;
         }
+        setRootCursor(display, ewmh);
         return new LocalDisplay(display, controller, ewmh);
+    }
+
+    /**
+     * Gives {@code :N}'s root the ordinary arrow instead of the black cross it comes up with.
+     *
+     * <p>Purely cosmetic, and only visible in a Xephyr window someone is watching — {@code ffmpeg} grabs with
+     * {@code -draw_mouse 0}, so the cursor was never in the stream and never in a capture. It is worth the six
+     * lines anyway because the cross reads as a broken session to anyone who has not been told otherwise, and
+     * because the reason it is there is a gap rather than a choice: a bare X server's root cursor is
+     * {@code XC_X_cursor}, replaced at login by a desktop environment that a private display does not have.
+     * A session with a window manager might have got one from openbox; an emulator session runs
+     * {@code withoutWindowManager()} and so has nobody at all.
+     *
+     * <p>Here rather than in {@code DisplayAgent} because this is the class that owns the {@code :N}
+     * connection in <em>either</em> topology — the agent child normally, and this same process under
+     * {@code -Dbotmaker.session.display.local=true}. Best-effort throughout: a session must never fail to start
+     * over a cursor.
+     */
+    private static void setRootCursor(String display, Pointer ewmh) {
+        try {
+            Pointer cursor = X11.INSTANCE.XCreateFontCursor(ewmh, X11.XC_left_ptr);
+            if (cursor == null) {
+                return;
+            }
+            X11.INSTANCE.XDefineCursor(ewmh, X11.INSTANCE.XDefaultRootWindow(ewmh), cursor);
+            X11.INSTANCE.XFreeCursor(ewmh, cursor);
+            X11.INSTANCE.XFlush(ewmh);
+        } catch (Throwable cosmetic) {
+            Diag.log("[Session] " + display + ": could not set the root cursor (" + cosmetic + ")");
+        }
     }
 
     @Override
