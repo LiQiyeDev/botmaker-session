@@ -120,11 +120,24 @@ public interface DesktopSession extends AutoCloseable {
      * and is torn down with it, so a caller that forgets to {@link VideoStream#close()} leaks nothing past
      * {@link #close()}.
      *
-     * @param maxEdge the long edge the encode is downscaled to; the surface rect callers tag frames with stays
-     *                {@link #screen()} regardless, exactly as on the JPEG path
+     * @param maxEdge the long edge the encode is downscaled to; the surface rect callers tag frames with is
+     *                {@link VideoStream#surface()} regardless of it, exactly as on the JPEG path
      */
     default VideoStream openVideoStream(int maxEdge, int fps, java.util.function.Consumer<VideoPacket> sink) {
         return null;
+    }
+
+    /**
+     * The rect a {@link #openVideoStream} on this session <em>would</em> encode right now, or {@code null}
+     * when nothing on it is painted.
+     *
+     * <p>A stream is pointed at one drawable when it opens and cannot be re-aimed, so this is how a caller
+     * notices that the drawable it is streaming is no longer the one with the pixels — a launcher chain
+     * swapping its window for the game's, a client resizing. Cheap enough to ask once a frame (implementations
+     * memoise), and answering {@link #screen()} is right for any session whose root is what gets grabbed.
+     */
+    default Rectangle videoSurface() {
+        return screen();
     }
 
     /**

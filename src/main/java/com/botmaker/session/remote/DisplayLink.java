@@ -2,6 +2,7 @@ package com.botmaker.session.remote;
 
 import com.botmaker.session.impl.NestedSession;
 
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.session.Preview;
 import com.botmaker.session.PreviewFrame;
 
@@ -86,6 +87,29 @@ public interface DisplayLink extends NativeController, AutoCloseable {
         }
         GenericWindow window = largestWindow();
         return window == null ? null : encoded(captureWindow(window), window.getRect(), maxEdge, quality);
+    }
+
+    /**
+     * <b>The same choice {@link #previewFrame} makes, without encoding anything</b>: which drawable on this
+     * display has pixels on it, or {@code null} when nothing does.
+     *
+     * <p>It exists because the video path cannot ask the question the way the preview path does. An
+     * {@code ffmpeg} is pointed at one drawable <em>once</em> and then runs for minutes, so "grab the root and
+     * look at it" is not available to it — and getting the answer wrong is not a black frame but a black
+     * stream. Sharing the decision rule (root, else the largest mapped window) is what keeps the two paths
+     * encoding one surface rather than two that agree by coincidence.
+     *
+     * <p>Answering {@code null} rather than falling back to the root is deliberate: a caller that opened an
+     * encoder on an unpainted root would produce a perfectly healthy stream of black, with no error anywhere
+     * to explain it. Declining leaves the caller on its JPEG path, which is the honest picture of a display
+     * that has nothing on it yet.
+     */
+    default PaintedSurface paintedSurface() {
+        if (!Preview.isBlank(captureScreen())) {
+            return new PaintedSurface(0, screenSize());
+        }
+        GenericWindow window = largestWindow();
+        return window == null ? null : new PaintedSurface(WindowIds.of(window), window.getRect());
     }
 
     /**

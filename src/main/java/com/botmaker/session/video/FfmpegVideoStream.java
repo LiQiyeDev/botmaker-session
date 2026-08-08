@@ -1,7 +1,9 @@
 package com.botmaker.session.video;
 
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.shared.Diag;
 
+import java.awt.Rectangle;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -12,8 +14,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * A {@link VideoStream} backed by {@code ffmpeg -f x11grab}: it grabs a session's {@code :N} root and encodes
- * it to H.264, hardware-first, handing each access unit to the sink.
+ * A {@link VideoStream} backed by {@code ffmpeg -f x11grab}: it grabs one drawable on a session's {@code :N}
+ * and encodes it to H.264, hardware-first, handing each access unit to the sink.
+ *
+ * <p><b>One drawable, chosen once.</b> The caller says which — see {@link PaintedSurface} — and it is the root
+ * only when the root is what gets painted. That distinction is the whole difference between this working and
+ * not on a compositing backend, and it cannot be revisited later: an encoder is pointed at a drawable when it
+ * starts, so a surface that changes is a stream that ends and a new one that opens.
  *
  * <h2>Why this is worth a process</h2>
  *
@@ -77,28 +84,35 @@ public final class FfmpegVideoStream implements VideoStream {
 
     private final Consumer<VideoPacket> sink;
     private final Spawner spawner;
+    private final PaintedSurface surface;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Process current;
     private volatile boolean producing;
 
-    private FfmpegVideoStream(Consumer<VideoPacket> sink, Spawner spawner) {
+    private FfmpegVideoStream(Consumer<VideoPacket> sink, Spawner spawner, PaintedSurface surface) {
         this.sink = sink;
         this.spawner = spawner;
+        this.surface = surface;
     }
 
     /**
-     * Starts encoding {@code display}'s root, downscaled so its long edge is at most {@code maxEdge}, at
-     * {@code fps}. Returns at once; the encoder is chosen on a background thread and {@link #alive()} turns
-     * true when one of them produces a picture.
+     * Starts encoding {@code surface} on {@code display}, downscaled so its long edge is at most
+     * {@code maxEdge}, at {@code fps}. Returns at once; the encoder is chosen on a background thread and
+     * {@link #alive()} turns true when one of them produces a picture.
      *
-     * <p>{@code width}/{@code height} are the display's real size — the source rect the consumer tags frames
-     * with stays that size regardless of the downscale, exactly as on the JPEG path, because the pilot's client
-     * fits and maps touches through the declared surface rect rather than the bitmap's own pixels.
+     * <p><b>A surface, not the display.</b> This grabbed {@code -i :N} — the root — until a gamescope session
+     * showed what that is worth: its compositor never paints the root, so the stream was valid, healthy and
+     * black. {@link PaintedSurface} is the same choice the JPEG path makes per frame, made once here, and it
+     * becomes {@code -window_id} when it is a client window.
+     *
+     * <p>The surface's <em>size</em> is what is grabbed and its rect is what {@link #surface()} reports;
+     * neither changes with the downscale, because the pilot's client fits and maps touches through the
+     * declared rect rather than through the bitmap's own pixels — exactly as on the JPEG path.
      */
-    public static FfmpegVideoStream open(String display, int width, int height, int maxEdge, int fps,
+    public static FfmpegVideoStream open(String display, PaintedSurface surface, int maxEdge, int fps,
                                          Consumer<VideoPacket> sink, Spawner spawner) {
-        FfmpegVideoStream stream = new FfmpegVideoStream(sink, spawner);
-        Thread t = new Thread(() -> stream.run(display, width, height, maxEdge, fps), "session-video");
+        FfmpegVideoStream stream = new FfmpegVideoStream(sink, spawner, surface);
+        Thread t = new Thread(() -> stream.run(display, surface, maxEdge, fps), "session-video");
         t.setDaemon(true);
         t.start();
         return stream;
@@ -116,6 +130,11 @@ public final class FfmpegVideoStream implements VideoStream {
     }
 
     @Override
+    public Rectangle surface() {
+        return new Rectangle(surface.rect());
+    }
+
+    @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
             return;
@@ -130,12 +149,12 @@ public final class FfmpegVideoStream implements VideoStream {
 
     // --- the candidate walk ---
 
-    private void run(String display, int width, int height, int maxEdge, int fps) {
+    private void run(String display, PaintedSurface target, int maxEdge, int fps) {
         for (Encoder encoder : Encoder.values()) {
             if (closed.get()) {
                 return;
             }
-            if (attempt(encoder, display, width, height, maxEdge, fps)) {
+            if (attempt(encoder, display, target, maxEdge, fps)) {
                 return;
             }
         }
@@ -146,8 +165,8 @@ public final class FfmpegVideoStream implements VideoStream {
      * Runs one candidate to completion. Returns true if it produced video at all — in which case this call has
      * already blocked for the whole life of the stream and there is nothing left to fall back to.
      */
-    private boolean attempt(Encoder encoder, String display, int width, int height, int maxEdge, int fps) {
-        List<String> command = command(encoder, display, width, height, maxEdge, fps);
+    private boolean attempt(Encoder encoder, String display, PaintedSurface target, int maxEdge, int fps) {
+        List<String> command = command(encoder, display, target, maxEdge, fps);
         Process process;
         try {
             process = spawner.spawn(command);
@@ -210,9 +229,16 @@ public final class FfmpegVideoStream implements VideoStream {
      * two seconds so a client joining mid-stream waits at most that long for its entry point, {@code -nostdin}
      * so a backgrounded ffmpeg never fights for the terminal, and {@code -f h264 -} for raw Annex-B on stdout
      * rather than a container that would buffer to find its own frame boundaries.
+     *
+     * <p>{@code -window_id} is the one argument that decides whether this produces a picture at all on a
+     * compositing backend, and it is only emitted for a client window: x11grab's default is the root, and
+     * passing {@code 0} explicitly is not the same thing to every ffmpeg build. The grab is at the surface's
+     * own size and its offset is <em>not</em> passed as {@code +x,y} — that syntax crops the root, whereas a
+     * window grab is already in the window's own coordinates.
      */
-    static List<String> command(Encoder encoder, String display, int width, int height, int maxEdge, int fps) {
-        int[] size = fit(width, height, maxEdge);
+    static List<String> command(Encoder encoder, String display, PaintedSurface target, int maxEdge, int fps) {
+        Rectangle rect = target.rect();
+        int[] size = fit(rect.width, rect.height, maxEdge);
         List<String> cmd = new ArrayList<>(List.of(
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"));
         if (encoder == Encoder.VAAPI) {
@@ -221,9 +247,12 @@ public final class FfmpegVideoStream implements VideoStream {
         cmd.addAll(List.of(
                 "-f", "x11grab",
                 "-framerate", String.valueOf(fps),
-                "-video_size", width + "x" + height,
-                "-draw_mouse", "0",
-                "-i", display));
+                "-video_size", rect.width + "x" + rect.height,
+                "-draw_mouse", "0"));
+        if (!target.isRoot()) {
+            cmd.addAll(List.of("-window_id", String.valueOf(target.windowId())));
+        }
+        cmd.addAll(List.of("-i", display));
         if (encoder == Encoder.VAAPI) {
             // The scale has to happen on the GPU side of the upload, or the upload is of a full-size frame.
             cmd.addAll(List.of("-vf", "format=nv12,hwupload,scale_vaapi=" + size[0] + ":" + size[1]));

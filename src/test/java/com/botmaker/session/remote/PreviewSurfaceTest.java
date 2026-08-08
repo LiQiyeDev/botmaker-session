@@ -1,5 +1,6 @@
 package com.botmaker.session.remote;
 
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.session.PreviewFrame;
 import com.botmaker.shared.capture.GenericWindow;
 import org.junit.jupiter.api.Test;
@@ -86,6 +87,40 @@ class PreviewSurfaceTest {
         link.frames.put(3L, black(800, 600));
 
         assertNull(link.previewFrame(1280, 0.6f));
+    }
+
+    /**
+     * The video path asks the same question without an encode, and must get the same answer — one surface
+     * streamed two ways, not two that agree by coincidence.
+     */
+    @Test
+    void theVideoSurfaceIsTheSameChoiceThePreviewMakes() {
+        FakeLink link = new FakeLink(black(1920, 1080), new Rectangle(0, 0, 1920, 1080));
+        link.windows.add(new GenericWindow(9L, "Firestone", new Rectangle(307, 239, 1280, 661)));
+        link.frames.put(9L, painted(1280, 661));
+
+        PaintedSurface surface = link.paintedSurface();
+
+        assertNotNull(surface);
+        assertEquals(9L, surface.windowId(), "an ffmpeg pointed at the root here would encode black forever");
+        assertEquals(link.previewFrame(1280, 0.6f).surface(), surface.rect());
+    }
+
+    @Test
+    void aPaintedRootIsTheVideoSurfaceToo() {
+        FakeLink link = new FakeLink(painted(1920, 1080), new Rectangle(0, 0, 1920, 1080));
+
+        PaintedSurface surface = link.paintedSurface();
+
+        assertNotNull(surface);
+        assertTrue(surface.isRoot(), "Xephyr paints its root, and x11grab's default input is exactly that");
+        assertEquals(new Rectangle(0, 0, 1920, 1080), surface.rect());
+    }
+
+    /** Nothing painted is no surface — an encoder opened on it would run for minutes producing black. */
+    @Test
+    void anUnpaintedDisplayHasNoVideoSurface() {
+        assertNull(new FakeLink(black(1920, 1080), new Rectangle(0, 0, 1920, 1080)).paintedSurface());
     }
 
     /**

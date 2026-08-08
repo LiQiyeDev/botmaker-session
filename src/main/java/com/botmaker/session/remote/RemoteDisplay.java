@@ -1,5 +1,6 @@
 package com.botmaker.session.remote;
 
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.impl.NestedSession;
 
@@ -117,6 +118,23 @@ public final class RemoteDisplay implements DisplayLink {
         }
         Rectangle surface = new Rectangle(r.asInt(1, 0), r.asInt(2, 0), r.asInt(3, 0), r.asInt(4, 0));
         return surface.isEmpty() ? null : new PreviewFrame(r.payload, surface);
+    }
+
+    /**
+     * The agent's surface choice, as a line rather than a picture — see {@link DisplayLink#paintedSurface}.
+     * The default would work here, but only by pulling a full-size PNG of the root across the pipe purely to
+     * ask whether it is black; the video path asks this once a second for as long as it streams.
+     *
+     * <p>An empty rect is the agent's "nothing is painted", which is also what a dead link answers.
+     */
+    @Override
+    public PaintedSurface paintedSurface() {
+        Response r = call("surface");
+        if (r == null) {
+            return null;
+        }
+        Rectangle rect = new Rectangle(r.asInt(2, 0), r.asInt(3, 0), r.asInt(4, 0), r.asInt(5, 0));
+        return rect.isEmpty() ? null : new PaintedSurface(r.asLong(1, 0), rect);
     }
 
     @Override

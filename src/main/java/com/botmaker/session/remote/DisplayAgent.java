@@ -1,5 +1,6 @@
 package com.botmaker.session.remote;
 
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.session.Preview;
 import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.impl.NestedSession;
@@ -135,6 +136,7 @@ public final class DisplayAgent {
             case "captureRoot" -> png(display.captureScreen());
             case "preview" -> preview(AgentProtocol.asInt(a, 1, Preview.MAX_EDGE),
                 AgentProtocol.asInt(a, 2, 60));
+            case "surface" -> surface();
 
             // --- window management ---
             case "focus" -> ok(() -> display.focusWindow(window(a, 1)));
@@ -234,6 +236,25 @@ public final class DisplayAgent {
         Rectangle r = frame.surface();
         respond(AgentProtocol.OK + "\t" + frame.jpeg().length
             + "\t" + r.x + "\t" + r.y + "\t" + r.width + "\t" + r.height, frame.jpeg());
+    }
+
+    /**
+     * Which drawable has pixels on it, without a picture of it — {@link DisplayLink#paintedSurface}, again
+     * delegated so both links choose alike. The answer is a video encoder's input, and it is asked repeatedly
+     * for as long as a stream runs, which is why it is a line of six integers rather than a PNG the parent
+     * would have to decode to reach the same conclusion.
+     *
+     * <p>An answer with no fields is "nothing is painted"; the parent reads that as an empty rect.
+     */
+    private void surface() throws IOException {
+        PaintedSurface surface = display.paintedSurface();
+        if (surface == null || surface.rect() == null || surface.rect().isEmpty()) {
+            respond(AgentProtocol.OK + "\t0", null);
+            return;
+        }
+        Rectangle r = surface.rect();
+        respond(AgentProtocol.OK + "\t0\t" + surface.windowId()
+            + "\t" + r.x + "\t" + r.y + "\t" + r.width + "\t" + r.height, null);
     }
 
     /** A frame as PNG — lossless, because these pixels are what the vision stack matches templates against. */

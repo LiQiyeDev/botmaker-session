@@ -1,5 +1,7 @@
 package com.botmaker.session.video;
 
+import java.awt.Rectangle;
+
 /**
  * A live H.264 encode of a session's screen, pushing {@link VideoPacket}s to the sink it was opened with.
  *
@@ -27,6 +29,17 @@ public interface VideoStream extends AutoCloseable {
      * client that configures its decoder from this never has to reconfigure mid-stream.
      */
     String codec();
+
+    /**
+     * The rect on the session's screen that this stream's pictures are of — what a viewer fits its canvas to
+     * and maps a tap through.
+     *
+     * <p>It is <b>not</b> always the session's screen, which is why the stream reports it rather than letting
+     * the caller assume: a compositing backend never paints its X root, so the drawable with pixels on it is a
+     * client window, at that window's own origin and size. Fixed for the life of the stream — the encoder was
+     * pointed at one drawable at open — so a surface that changes is a stream that ends and reopens.
+     */
+    Rectangle surface();
 
     @Override
     void close();

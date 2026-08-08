@@ -16,6 +16,57 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — the H.264 encoder is aimed at the same surface the preview is
+
+Completes the entry below, whose **Deferred / next** this was: the JPEG path had learned that the pixels are
+in a window, and `ffmpeg` was still grabbing the root.
+
+### Done
+
+- **`PaintedSurface(long windowId, Rectangle rect)`** (`com.botmaker.session`) names the choice — `windowId 0`
+  is the root, which is a real answer (Xephyr paints it) and not a "none". `DisplayLink.paintedSurface()`
+  makes it by the *same rule* `previewFrame` applies per frame, so the two paths encode one surface rather
+  than two that agree by coincidence. It answers `null` for a display with nothing painted, rather than
+  falling back to the root: an encoder opened on an unpainted root is a healthy stream of black.
+- **The agent serves it as a line, not a picture** (`surface` verb → `OK\t0\t<id>\t<x>\t<y>\t<w>\t<h>`). The
+  inherited default would work over `RemoteDisplay` only by pulling a full-size PNG of the root across the
+  pipe to ask whether it is black, and the video path asks this once a second for as long as it streams.
+- **`FfmpegVideoStream.open(display, PaintedSurface, …)`** emits `-window_id <xid>` for a client window (and
+  omits the flag entirely for the root — x11grab defaults there, and `-window_id 0` is not uniformly the same
+  thing across builds). The grab is at the surface's own size; its offset is *not* passed as `+x,y`, which
+  crops the root, because a window grab already arrives in the window's own coordinates.
+- **`VideoStream.surface()`** — the stream reports what it is a picture of, and `PilotVideo.rect()` is that
+  instead of `session.screen()`. Same Interact reason as the JPEG path: a window's pixels tagged with the
+  screen's origin misplace every tap by the window's offset.
+- **A surface that moves ends the stream.** `DesktopSession.videoSurface()` (memoised 1 s in `NestedSession`,
+  sharing the TTL with `x11Capturable`) is what `PilotVideo` compares against each tick. This is a case the
+  root grab did not have: a root cannot vanish, but the window a launcher chain was showing does, and an
+  encoder holding a destroyed drawable has no way to say so except by dying — if it dies at all. The reopen
+  re-announces with the new rect through the path `announceVideo` already had.
+- **A decline is no longer permanent.** `PilotVideo` latched "this session gives no video" for the session's
+  life, which was right for "every encoder failed" and wrong for "nothing is painted yet" — a pilot opened one
+  second before the game mapped its window would have stayed on JPEG until the session restarted. The two are
+  now distinguished; the temporary one is retried after 2 s.
+- Tests: `FfmpegVideoStreamTest` +2 (the `-window_id` shape and its absence for a root), `PreviewSurfaceTest`
+  +3 (the video surface is the preview's choice; a painted root is the root; nothing painted is no surface),
+  and Studio's new `PilotVideoTest` (5) over the rect, the decline retry and the reopen-on-move.
+
+### Verified live
+
+Against a real `:9` (Xephyr, an xterm mapped), through `FfmpegVideoStream` itself:
+`paintedSurface` chose the root (`windowId=0`, 800×600 — the non-compositing case), and a stream opened on the
+xterm's `PaintedSurface[windowId=2097164, rect=31,41 259×160]` spawned
+`… -video_size 259x160 -draw_mouse 0 -window_id 2097164 -i :9 …`, was accepted by `h264_nvenc`, and produced
+**116 access units / 3 keyframes / 3.4 MB in 5 s** with `surface()` reporting the window's rect, not the
+screen's.
+
+### Deferred / next
+
+The gamescope half is unverified live — the `:1` session was gone by the time this landed. The measurement it
+rests on is the one in the entry below (`-i :1` → a frame mean of 0.04; `-window_id <xid>` → 28619).
+
+---
+
 ## 2026-08-08 — a preview is a picture of a *surface*, and under gamescope that is never the root
 
 ### The bug

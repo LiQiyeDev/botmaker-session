@@ -2,6 +2,7 @@ package com.botmaker.session.impl;
 
 import com.botmaker.session.Capability;
 import com.botmaker.session.DesktopSession;
+import com.botmaker.session.PaintedSurface;
 import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.SessionHealth;
 import com.botmaker.session.SessionKeyboard;
@@ -158,11 +159,18 @@ public final class NestedSession implements DesktopSession {
     private volatile AppOutputLog appLog;
     private volatile boolean closed;
 
-    /** How long an {@link #x11Capturable()} answer is reused; a frame loop asks it 24 times a second. */
-    private static final long CAPTURABLE_TTL_MS = 1000;
+    /**
+     * How long an {@link #x11Capturable()} or {@link #videoSurface()} answer is reused. Both are X round trips
+     * asked once per frame by a loop running at 24 fps, and both measure something that changes at the speed
+     * of a window being mapped — a second of staleness is a frame's worth of wrong on a transition nobody can
+     * see, against 23 round trips a second saved on every other frame.
+     */
+    private static final long PROBE_TTL_MS = 1000;
 
     private volatile boolean capturable = true;
     private volatile long capturableAt;
+    private volatile PaintedSurface painted;
+    private volatile long paintedAt;
 
     private NestedSession(String id, SessionReaper reaper, SessionDisplay display,
                           DisplayLink link, Options options, SessionBus bus) {
@@ -417,17 +425,41 @@ public final class NestedSession implements DesktopSession {
      * as their floor (see {@code PilotRoutes}) so the answer degrades to a better source or to this same
      * session, never past it to the user's real desktop.
      *
-     * <p><b>Memoised</b> for {@value #CAPTURABLE_TTL_MS}&nbsp;ms: the pilot asks this once per frame and each
+     * <p><b>Memoised</b> for {@value #PROBE_TTL_MS}&nbsp;ms: the pilot asks this once per frame and each
      * miss is an X round trip, while the thing it measures changes at the speed of a window mapping.
      */
     @Override
     public boolean x11Capturable() {
         long now = System.currentTimeMillis();
-        if (now - capturableAt > CAPTURABLE_TTL_MS) {
+        if (now - capturableAt > PROBE_TTL_MS) {
             capturable = link.mappedCount() != 0;
             capturableAt = now;
         }
         return capturable;
+    }
+
+    /**
+     * The rect a stream of this session would encode, or {@code null} when nothing on it is painted — the
+     * public face of {@link DisplayLink#paintedSurface}, memoised for {@value #PROBE_TTL_MS}&nbsp;ms.
+     *
+     * <p>A caller watches this to notice that the surface it is streaming has been replaced. That is a case
+     * the root grab did not have: a root cannot vanish, but the window a launcher chain was showing does, and
+     * an encoder pointed at a destroyed drawable has nothing to say about it except dying.
+     */
+    @Override
+    public Rectangle videoSurface() {
+        PaintedSurface surface = surface();
+        return surface == null ? null : surface.rect();
+    }
+
+    /** The memoised choice itself — {@link #openVideoStream} needs the window id, not only the rect. */
+    private PaintedSurface surface() {
+        long now = System.currentTimeMillis();
+        if (now - paintedAt > PROBE_TTL_MS) {
+            painted = link.paintedSurface();
+            paintedAt = now;
+        }
+        return painted;
     }
 
     @Override
@@ -575,17 +607,26 @@ public final class NestedSession implements DesktopSession {
      * the display it is reading — the one process here that is neither the payload nor something the payload
      * needs, and the one that would otherwise outlive a {@code kill -9}'d Studio still holding an X connection.
      *
-     * <p>Declined, with {@code null}, in the two cases where it could only produce black: no {@code ffmpeg} on
-     * PATH, and a display whose client is Wayland-only ({@link #x11Capturable()}) — the same condition that
-     * already sends the pilot's route resolver elsewhere. Declining is not a failure; the caller keeps its JPEG
-     * path for exactly this.
+     * <p>Declined, with {@code null}, in the three cases where it could only produce black: no {@code ffmpeg}
+     * on PATH, a display whose client is Wayland-only ({@link #x11Capturable()}) — the same condition that
+     * already sends the pilot's route resolver elsewhere — and a display with nothing painted on it yet, which
+     * on gamescope is what the seconds before a game maps its window look like. Declining is not a failure;
+     * the caller keeps its JPEG path for exactly this, and asks again once the display has something to show.
+     *
+     * <p><b>It grabs a surface, not the display.</b> {@link DisplayLink#paintedSurface} picks it, by the same
+     * rule the JPEG path applies to every frame, so the two paths cannot disagree about what the pilot is
+     * looking at — which under gamescope is the difference between the game and a black rectangle.
      */
     @Override
     public VideoStream openVideoStream(int maxEdge, int fps, Consumer<VideoPacket> sink) {
         if (closed || !x11Capturable() || !Executables.onPath("ffmpeg")) {
             return null;
         }
-        return FfmpegVideoStream.open(display.displayName(), display.width(), display.height(), maxEdge, fps,
+        PaintedSurface target = surface();
+        if (target == null || target.rect() == null || target.rect().isEmpty()) {
+            return null;
+        }
+        return FfmpegVideoStream.open(display.displayName(), target, maxEdge, fps,
                 sink, command -> reaper.launch(SessionUnit.VIDEO, command, sessionEnv(), Redirect.PIPE));
     }
 
