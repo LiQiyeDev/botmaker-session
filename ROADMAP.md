@@ -16,6 +16,37 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — a session says whether its pixels are on X11
+
+**Changed:** `DesktopSession.java`, `impl/NestedSession.java`.
+
+**The bug.** Waydroid is a Wayland-only client. Under `gamescope --expose-wayland` its surface never reaches
+the embedded Xwayland, so grabbing the session's `:N` root *succeeds* and returns a full-size, entirely black
+frame — no exception, no null, nothing to tell it apart from a game on a dark screen. Both consumers preferred
+a live session unconditionally (the pilot's `PilotRoutes.current()` rung 1, the SDK's `Source.current()`), so
+the one route that *could* see those pixels — the emulator's ADB surface — was suppressed in favour of one
+that never could. The pilot showed nothing and said nothing.
+
+**Done**
+
+- `DesktopSession.x11Capturable()`, `default true` — the host desktop and an Xephyr session are X11 all the
+  way down. `NestedSession` overrides it as `display.waylandDisplay() == null`, i.e. the same condition that
+  earns `Capability.WAYLAND_CLIENTS`, read as its consequence rather than its benefit.
+- It is deliberately the *capability* and not "is a Wayland client actually connected", which nothing on this
+  side can observe. The two errors cost wildly different amounts: a false `false` for a gamescope session
+  hosting an ordinary X11 game costs one look at the consumer's next-best source; a false `true` for one
+  hosting Waydroid costs a black stream with no error anywhere. Consumers keep the session as their *floor*
+  (see `PilotRoutes` rung 4), so the conservative answer never degrades past the user's real desktop.
+
+**Deferred / next**
+
+- A session could answer this from *observation* — whether anything has ever mapped on its Xwayland root —
+  which would let an X11 game under `--expose-wayland` be recognised as capturable rather than merely
+  outranked. It needs a client-count probe through `DisplayLink` that does not exist yet, and the floor rule
+  above makes the current answer safe without it.
+
+---
+
 ## 2026-08-08 — the driven-window sync stopped recursing into itself
 
 **Why.** Launching a Heroic-routed game (Firestone) into a gamescope session died with a `StackOverflowError`

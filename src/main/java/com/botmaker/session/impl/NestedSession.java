@@ -385,6 +385,23 @@ public final class NestedSession implements DesktopSession {
         return new Rectangle(0, 0, display.width(), display.height());
     }
 
+    /**
+     * {@code false} once this display serves a Wayland socket of its own — the same condition that earns
+     * {@link Capability#WAYLAND_CLIENTS}, read here as its consequence rather than its benefit.
+     *
+     * <p>It is deliberately the <em>capability</em> and not "is a Wayland client actually connected": nothing on
+     * this side can see a client's surface, and the cost of the two errors is wildly asymmetric. Answering
+     * {@code false} for a gamescope session that turns out to be hosting an ordinary X11 game costs a consumer
+     * one look at its next-best source; answering {@code true} for one hosting Waydroid costs a black stream
+     * with no error anywhere to explain it — the reported "the pilot shows nothing". Consumers are expected to
+     * keep the session as their floor (see {@code PilotRoutes}), so the conservative answer degrades to a
+     * better source or to this same session, never past it to the user's real desktop.
+     */
+    @Override
+    public boolean x11Capturable() {
+        return display.waylandDisplay() == null;
+    }
+
     @Override
     public SessionPointer pointer() {
         return pointer;

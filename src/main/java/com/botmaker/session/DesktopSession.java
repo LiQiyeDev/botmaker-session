@@ -78,6 +78,24 @@ public interface DesktopSession extends AutoCloseable {
         return capture();
     }
 
+    /**
+     * Whether this session's pixels can be read off an <b>X11</b> root at all.
+     *
+     * <p>A session that hosts a compositor of its own (gamescope with {@code --expose-wayland}) can be running a
+     * <em>Wayland-only</em> client — Waydroid's {@code show-full-ui} has no X11 path whatsoever — whose surface
+     * never reaches the embedded Xwayland. {@link #captureScreen()} then succeeds and hands back a perfectly
+     * valid frame of an empty root: black pixels, no error, nothing to distinguish it from a game that happens
+     * to be on a black screen. Consumers that pick a capture source (the pilot's route resolver, the SDK's
+     * ambient {@link com.botmaker.session.ActiveSession} source) need to know that <em>before</em> they commit
+     * to the session, which is why this is a question the session answers rather than a probe each of them
+     * rebuilds — and rebuilds differently.
+     *
+     * <p>The default is {@code true}: the host desktop and an Xephyr session are X11 all the way down.
+     */
+    default boolean x11Capturable() {
+        return true;
+    }
+
     /** The session's liveness — a nested supervisor reports {@code DEGRADED}/{@code DEAD} for chaos recovery. */
     default SessionHealth health() {
         return SessionHealth.HEALTHY;
