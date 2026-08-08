@@ -19,6 +19,9 @@ import com.botmaker.session.process.SessionReaper;
 import com.botmaker.session.process.SessionUnit;
 import com.botmaker.session.remote.DisplayLink;
 import com.botmaker.session.remote.WindowIds;
+import com.botmaker.session.video.FfmpegVideoStream;
+import com.botmaker.session.video.VideoPacket;
+import com.botmaker.session.video.VideoStream;
 
 import com.botmaker.shared.Diag;
 import com.botmaker.shared.Executables;
@@ -34,6 +37,7 @@ import com.botmaker.shared.platform.SessionEnv;
 
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
+import java.lang.ProcessBuilder.Redirect;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -42,6 +46,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * A {@link DesktopSession} over a private nested display the bot owns — the piece that makes background input
@@ -540,6 +545,25 @@ public final class NestedSession implements DesktopSession {
     @Override
     public byte[] previewJpeg(int maxEdge, float quality) {
         return link.previewJpeg(maxEdge, quality);
+    }
+
+    /**
+     * An {@code ffmpeg} grabbing {@code :N} directly, launched into this session's reap group so it dies with
+     * the display it is reading — the one process here that is neither the payload nor something the payload
+     * needs, and the one that would otherwise outlive a {@code kill -9}'d Studio still holding an X connection.
+     *
+     * <p>Declined, with {@code null}, in the two cases where it could only produce black: no {@code ffmpeg} on
+     * PATH, and a display whose client is Wayland-only ({@link #x11Capturable()}) — the same condition that
+     * already sends the pilot's route resolver elsewhere. Declining is not a failure; the caller keeps its JPEG
+     * path for exactly this.
+     */
+    @Override
+    public VideoStream openVideoStream(int maxEdge, int fps, Consumer<VideoPacket> sink) {
+        if (closed || !x11Capturable() || !Executables.onPath("ffmpeg")) {
+            return null;
+        }
+        return FfmpegVideoStream.open(display.displayName(), display.width(), display.height(), maxEdge, fps,
+                sink, command -> reaper.launch(SessionUnit.VIDEO, command, sessionEnv(), Redirect.PIPE));
     }
 
     @Override

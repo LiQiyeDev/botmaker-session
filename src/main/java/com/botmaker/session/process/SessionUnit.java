@@ -28,6 +28,11 @@ public enum SessionUnit {
     /** The session's private {@code dbus-daemon}, and with it its own Flatpak portal. */
     DBUS("dbus"),
     /**
+     * The {@code ffmpeg} encoding the session's screen for a remote viewer. Infrastructure, not payload: it
+     * grabs the display and must go down with it, and a session that has no viewer never launches one.
+     */
+    VIDEO("video"),
+    /**
      * The payload — the game or launcher the session was started for. The one role that is <em>not</em>
      * infrastructure, which is what {@link SessionReaper#unitNamesExcept} is asked to exclude.
      */

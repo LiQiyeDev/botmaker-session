@@ -16,6 +16,44 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — H.264 off the session's display, with JPEG as the floor
+
+### The cost
+
+The previous entry cut a pilot frame from three codec passes to one. One is still a *whole picture* per
+frame: a 1280-px JPEG at 24 fps is intra-only, so a game screen that barely changes costs the same megabytes
+a second as one that does. Nothing in the JPEG path can send a difference, because JPEG has no notion of one.
+
+### Done
+
+- **`com.botmaker.session.video`** — a live H.264 encode of a session's `:N` root:
+  - **`AnnexB`** cuts the encoder's raw byte stream into access units. Pure, no threads and no I/O, which is
+    why it is a type of its own: it is the only part of this path testable without a GPU, an X server or an
+    `ffmpeg`. It emits a picture on the *type byte* of the next NAL rather than the next whole NAL — the
+    difference is a permanent frame of latency and a still scene whose last picture never arrives.
+  - **`FfmpegVideoStream`** spawns `ffmpeg -f x11grab -i :N` and walks `h264_nvenc` → `h264_vaapi` →
+    `libx264 -tune zerolatency`. A candidate is accepted only once it has **produced a packet**, never on
+    being listed by `ffmpeg -encoders`: a hardware encoder is listed on a machine whose driver refuses it,
+    whose device node is missing, or that is at its stream limit, and all three fail at run time. Opening is
+    therefore asynchronous — the caller is a frame loop and cannot block on three candidates failing.
+  - **`VideoStream`/`VideoPacket`** are the contract. `keyframe` means *SPS + PPS + IDR together*, not "has
+    an IDR": a client joining mid-stream has never seen the parameter sets, so the looser reading would hand
+    it an undecodable picture and produce a black canvas with no error anywhere.
+- **`DesktopSession.openVideoStream(maxEdge, fps, sink)`**, defaulting to `null` — the same shape as
+  `previewJpeg`, one step further. `NestedSession` implements it and **declines** (null, not an error) with no
+  `ffmpeg` on PATH or a display that is not `x11Capturable()`; both are sessions the JPEG path already serves.
+- **`SessionUnit.VIDEO`** — the encoder is launched into the session's reap group, so it dies with the display
+  it is reading and a `kill -9`'d Studio leaves no `ffmpeg` holding an X connection.
+
+### Worth knowing
+
+- **`-bf 0` is load-bearing twice.** B-frames reorder output (latency), and their absence is also what lets
+  `AnnexB` decide a picture boundary without parsing slice headers for `first_mb_in_slice`.
+- The surface rect a consumer tags frames with stays `screen()` regardless of the downscale, exactly as on the
+  JPEG path — the pilot's client fits and maps taps through the declared rect, never the bitmap's pixels.
+
+---
+
 ## 2026-08-08 — one codec pass for a preview frame
 
 ### The cost

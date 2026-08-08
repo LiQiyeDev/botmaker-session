@@ -5,6 +5,9 @@ import com.botmaker.session.impl.NestedSession;
 
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
+import com.botmaker.session.video.VideoPacket;
+import com.botmaker.session.video.VideoStream;
+
 import com.botmaker.shared.launch.LaunchSpec;
 
 import java.awt.Rectangle;
@@ -93,6 +96,28 @@ public interface DesktopSession extends AutoCloseable {
      * <b>never</b> the frame the vision stack matches against — that stays lossless; see {@link Preview}.
      */
     default byte[] previewJpeg(int maxEdge, float quality) {
+        return null;
+    }
+
+    /**
+     * A live <b>H.264 encode</b> of this session's screen, pushing access units to {@code sink} — or
+     * {@code null} when this session cannot produce one.
+     *
+     * <p>It is the same argument as {@link #previewJpeg}, one step further. That one moved the encode to where
+     * the pixels are; this one stops re-encoding the picture at all. A session screen is mostly static between
+     * frames, and an inter-coded stream sends the difference: a few kilobytes where a JPEG sends a few hundred,
+     * on hardware where there is hardware. What it costs is a decoder on the client, which is why every caller
+     * keeps the JPEG path and treats {@code null} — no encoder, no {@code ffmpeg}, a session with no X root to
+     * grab — as "use it".
+     *
+     * <p>The stream opens <em>asynchronously</em>; see {@link VideoStream#alive()}. It belongs to this session
+     * and is torn down with it, so a caller that forgets to {@link VideoStream#close()} leaks nothing past
+     * {@link #close()}.
+     *
+     * @param maxEdge the long edge the encode is downscaled to; the surface rect callers tag frames with stays
+     *                {@link #screen()} regardless, exactly as on the JPEG path
+     */
+    default VideoStream openVideoStream(int maxEdge, int fps, java.util.function.Consumer<VideoPacket> sink) {
         return null;
     }
 
