@@ -16,6 +16,32 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — backlog: measure Waydroid on gamescope instead of Xephyr
+
+Not implemented — recorded from a user report that **Waydroid is laggy while a gamescope-only launch is
+not**, so the next session doesn't have to re-derive it.
+
+Today a Waydroid session is Wayland → inner `gamescope --backend sdl` → **Xephyr** → the host X server.
+Xephyr reports `hardwareAccelerated() == false` (`NestedDisplay:77`): it is a software X server CPU-blitting
+every frame, and it sits between two composited layers. That is the structural suspect.
+
+**Dropping to a single gamescope does not work**, and the reason is already documented in
+`docs/display-pipeline.md` §6: a lone Wayland client on a gamescope display maps no X11 window, so
+`x11Capturable()` goes false, the capture reads an unpainted root, and both the bot and the pilot lose the
+picture. **What should be measured instead is swapping the *outer* display to gamescope**, keeping the inner
+`--backend sdl` — that window is still a mapped X11 client on the outer's Xwayland, so `PaintedSurface` and
+`DisplayLink.paintedSurface()` are unchanged, while the compositing becomes hardware.
+
+Two things fall out if it works: the lag, and **resizability** — gamescope scales between output `-W/-H` and
+internal `-w/-h`, so dragging its edge changes presentation without touching the framebuffer, which is
+exactly what Xephyr's deliberately-omitted `-resizeable` cannot offer (`NestedDisplay:95`, and §3).
+
+`SessionBackends.preferredBackend`'s note calls gamescope-in-gamescope "nesting for no gain" — that predates
+the lag report, and hardware compositing is the gain. Revisit it **with numbers**, on a box that has
+gamescope; the dev machine has neither it nor a real GPU, which is why this is recorded rather than done.
+
+---
+
 ## 2026-08-08 — the class inventory audited, and the untested seam gets its test
 
 The question was "are all 40 types in this module pulling weight?". Audited by grep across all four
