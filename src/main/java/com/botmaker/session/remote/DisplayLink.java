@@ -53,6 +53,28 @@ public interface DisplayLink extends NativeController, AutoCloseable {
      */
     BufferedImage captureScreen();
 
+    /**
+     * The same root frame as {@link #captureScreen()}, already downscaled to {@code maxEdge} and JPEG-encoded —
+     * or {@code null} when there is no frame to send (including a blank root, see
+     * {@link com.botmaker.session.Preview#isBlank}).
+     *
+     * <p>It exists so a preview can be produced <em>where the pixels already are</em>. Over an out-of-process
+     * link the default below is the wrong shape: it decodes a PNG this side of the pipe only to re-encode it,
+     * which is three codec passes and a payload several times larger than it needs to be, all inside the lock
+     * that input calls queue behind. {@link RemoteDisplay} therefore overrides it with a verb the agent serves.
+     *
+     * <p>The default keeps every in-process link ({@link LocalDisplay}, tests) correct with no work: grab, then
+     * encode. There is no pipe there, so there is nothing to save.
+     */
+    default byte[] previewJpeg(int maxEdge, float quality) {
+        BufferedImage root = captureScreen();
+        // The blank test belongs on both sides of the seam or the contract differs by implementation: an
+        // in-process link would answer a black JPEG where the agent answers "no frame".
+        return com.botmaker.session.Preview.isBlank(root)
+            ? null
+            : com.botmaker.session.Preview.jpeg(root, maxEdge, quality);
+    }
+
     /** The display's size as a rectangle at the origin, or a zero rectangle when it can't be read. */
     Rectangle screenSize();
 

@@ -1,5 +1,6 @@
 package com.botmaker.session.remote;
 
+import com.botmaker.session.Preview;
 import com.botmaker.session.impl.NestedSession;
 
 import com.botmaker.shared.capture.GenericWindow;
@@ -131,6 +132,8 @@ public final class DisplayAgent {
             // --- capture ---
             case "capture" -> png(display.captureWindow(window(a, 1)));
             case "captureRoot" -> png(display.captureScreen());
+            case "previewRoot" -> preview(AgentProtocol.asInt(a, 1, Preview.MAX_EDGE),
+                AgentProtocol.asInt(a, 2, 60));
 
             // --- window management ---
             case "focus" -> ok(() -> display.focusWindow(window(a, 1)));
@@ -200,6 +203,32 @@ public final class DisplayAgent {
 
     private void payload(String text) throws IOException {
         byte[] bytes = text == null ? new byte[0] : text.getBytes(StandardCharsets.UTF_8);
+        respond(AgentProtocol.OK + "\t" + bytes.length, bytes);
+    }
+
+    /**
+     * A root frame as a downscaled JPEG — the pilot's preview, encoded <b>here</b> rather than in the parent.
+     *
+     * <p>This is the whole point of the verb: {@code captureRoot} above must stay lossless for the vision
+     * stack, so a preview taken through it paid a PNG encode here, a PNG decode there and a JPEG encode after
+     * that, all on the caller's single frame thread and all while it held the link's request lock — the same
+     * lock the pilot's Interact taps contend with. One encode, in this process, on a payload several times
+     * smaller.
+     *
+     * <p>An empty payload means "no frame": either the grab failed or the root is entirely blank, which for a
+     * session hosting a Wayland-only client it always is (see {@link Preview#isBlank}). Answering it from here
+     * saves shipping a black JPEG the caller would only throw away.
+     *
+     * <p>{@code quality} arrives as a percentage because every protocol field is an integer; see
+     * {@link AgentProtocol}.
+     */
+    private void preview(int maxEdge, int qualityPercent) throws IOException {
+        BufferedImage root = display.captureScreen();
+        byte[] bytes = Preview.isBlank(root) ? null : Preview.jpeg(root, maxEdge, qualityPercent / 100f);
+        if (bytes == null || bytes.length == 0) {
+            respond(AgentProtocol.OK + "\t0", null);
+            return;
+        }
         respond(AgentProtocol.OK + "\t" + bytes.length, bytes);
     }
 

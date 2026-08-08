@@ -99,6 +99,16 @@ public final class RemoteDisplay implements DisplayLink {
         return image(call("captureRoot"));
     }
 
+    /**
+     * Asks the agent for an already-encoded preview instead of a PNG it would have to decode — see
+     * {@link DisplayLink#previewJpeg}. An empty payload is the agent's "no frame", including a blank root.
+     */
+    @Override
+    public byte[] previewJpeg(int maxEdge, float quality) {
+        Response r = call("previewRoot", maxEdge, Math.round(Math.min(1f, Math.max(0f, quality)) * 100));
+        return r == null || r.payload.length == 0 ? null : r.payload;
+    }
+
     @Override
     public Rectangle screenSize() {
         Response r = call("screen");

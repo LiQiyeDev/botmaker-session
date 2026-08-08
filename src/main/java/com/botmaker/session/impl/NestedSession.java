@@ -536,6 +536,12 @@ public final class NestedSession implements DesktopSession {
         return link.captureScreen();
     }
 
+    /** Straight through to the link, which is where the saving is — see {@link DisplayLink#previewJpeg}. */
+    @Override
+    public byte[] previewJpeg(int maxEdge, float quality) {
+        return link.previewJpeg(maxEdge, quality);
+    }
+
     @Override
     public SessionHealth health() {
         if (closed || !display.alive()) {

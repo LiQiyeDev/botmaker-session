@@ -79,6 +79,24 @@ public interface DesktopSession extends AutoCloseable {
     }
 
     /**
+     * A <b>lossy, already-encoded</b> frame of {@link #captureScreen()} — JPEG bytes, downscaled to
+     * {@code maxEdge} on the long side — or {@code null} when this session cannot produce one that way.
+     *
+     * <p>It is not a convenience over {@code captureScreen()}: the point is that the encode can happen where
+     * the pixels already are. A nested session's root lives in another process ({@code DisplayAgent}), so the
+     * bytes that reach a phone used to be a PNG encode, a pipe, a PNG decode and a JPEG encode — three codec
+     * passes for a preview, two of them on the caller's frame thread while it held the link's request lock.
+     * A session that can answer this replaces all three with one, in the process that holds the display.
+     *
+     * <p>{@code null} is the honest answer for a session that has no such shortcut, and every caller must have
+     * the full-frame path anyway (the {@code :0} desktop and an emulator are not encoded remotely). It is
+     * <b>never</b> the frame the vision stack matches against — that stays lossless; see {@link Preview}.
+     */
+    default byte[] previewJpeg(int maxEdge, float quality) {
+        return null;
+    }
+
+    /**
      * Whether this session's pixels can be read off an <b>X11</b> root at all.
      *
      * <p>A session that hosts a compositor of its own (gamescope with {@code --expose-wayland}) can be running a

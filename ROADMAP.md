@@ -16,6 +16,45 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — one codec pass for a preview frame
+
+### The cost
+
+A pilot frame off a nested session paid **three** codec passes to reach a phone: the agent PNG-encoded the
+`:N` root (`captureRoot`, lossless on purpose — the vision stack matches templates against those pixels),
+Studio decoded that PNG, and then JPEG-encoded it again at `ImageIO` defaults, full size, allocating a writer
+per frame. Two of the three ran on the single `pilot-frame` thread *while it held `RemoteDisplay`'s request
+lock* — the same lock Interact's taps queue behind. On top, the loop was a fixed **delay**, so a route that
+captured in 5 ms still waited the whole 83 ms period afterwards.
+
+### Done
+
+- **`com.botmaker.session.Preview`** — the shared preview policy: `isBlank` (the coarse 16-px grid that reads
+  an empty X11 root as "no capture"), `jpeg(img, maxEdge, quality)` with a **thread-local cached
+  `ImageWriter`**, and the constants `MAX_EDGE = 1280` / `QUALITY = 0.6`. It lives beside the session contract
+  because both ends of the path are here: the agent child and Studio's pilot were each doing a different
+  subset of this, disagreeing on quality, size and what "no frame" means.
+- **`previewRoot <maxEdge> <qualityPercent>`** in `DisplayAgent`/`AgentProtocol`: grab, blank-test, downscale,
+  JPEG — *in the process that already holds the display*. An empty payload is "no frame". `captureRoot`'s PNG
+  is untouched and stays lossless.
+- **`DisplayLink.previewJpeg(maxEdge, quality)`**, `default`-implemented as grab-then-encode (correct for
+  `LocalDisplay` and tests, where there is no pipe to save), overridden by `RemoteDisplay` with the verb.
+  Surfaced on **`DesktopSession.previewJpeg`** (`default null` — no shortcut) and forwarded by `NestedSession`
+  and `AdoptedSession`.
+
+Net: PNG encode + pipe + PNG decode + JPEG encode → **one** JPEG encode, off Studio's frame thread entirely,
+over a payload several times smaller, holding the link's lock for a fraction of the time.
+
+### Deferred / next
+
+- The agent still re-encodes from scratch every frame. Phase 5 of the plan replaces this path with `ffmpeg
+  -f x11grab` → `h264_nvenc`/`h264_vaapi`/`libx264` over the same WebSocket, keeping this JPEG path as the
+  negotiated fallback for no-ffmpeg / no-WebCodecs clients.
+- `previewJpeg` has no equivalent for a *window* (only the root). Nothing needs one — the pilot streams the
+  root precisely so a launcher chain's window swap is invisible — but a window preview would be the same shape.
+
+---
+
 ## 2026-08-08 — a session says whether its pixels are on X11
 
 **Changed:** `DesktopSession.java`, `impl/NestedSession.java`.
