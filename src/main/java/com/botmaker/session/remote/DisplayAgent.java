@@ -1,6 +1,7 @@
 package com.botmaker.session.remote;
 
 import com.botmaker.session.Preview;
+import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.impl.NestedSession;
 
 import com.botmaker.shared.capture.GenericWindow;
@@ -132,7 +133,7 @@ public final class DisplayAgent {
             // --- capture ---
             case "capture" -> png(display.captureWindow(window(a, 1)));
             case "captureRoot" -> png(display.captureScreen());
-            case "previewRoot" -> preview(AgentProtocol.asInt(a, 1, Preview.MAX_EDGE),
+            case "preview" -> preview(AgentProtocol.asInt(a, 1, Preview.MAX_EDGE),
                 AgentProtocol.asInt(a, 2, 60));
 
             // --- window management ---
@@ -207,7 +208,8 @@ public final class DisplayAgent {
     }
 
     /**
-     * A root frame as a downscaled JPEG — the pilot's preview, encoded <b>here</b> rather than in the parent.
+     * A downscaled JPEG of whichever surface on this display has pixels — the pilot's preview, encoded
+     * <b>here</b> rather than in the parent.
      *
      * <p>This is the whole point of the verb: {@code captureRoot} above must stay lossless for the vision
      * stack, so a preview taken through it paid a PNG encode here, a PNG decode there and a JPEG encode after
@@ -215,21 +217,23 @@ public final class DisplayAgent {
      * lock the pilot's Interact taps contend with. One encode, in this process, on a payload several times
      * smaller.
      *
-     * <p>An empty payload means "no frame": either the grab failed or the root is entirely blank, which for a
-     * session hosting a Wayland-only client it always is (see {@link Preview#isBlank}). Answering it from here
-     * saves shipping a black JPEG the caller would only throw away.
+     * <p>The choice of surface, and the reason it is not simply the root, live in
+     * {@link DisplayLink#previewFrame} — which is what this calls, so the in-process and out-of-process links
+     * cannot answer differently. The rect it chose rides on the response line: an empty payload means "no
+     * frame", and any other answer has to say what it is a picture <em>of</em>.
      *
      * <p>{@code quality} arrives as a percentage because every protocol field is an integer; see
      * {@link AgentProtocol}.
      */
     private void preview(int maxEdge, int qualityPercent) throws IOException {
-        BufferedImage root = display.captureScreen();
-        byte[] bytes = Preview.isBlank(root) ? null : Preview.jpeg(root, maxEdge, qualityPercent / 100f);
-        if (bytes == null || bytes.length == 0) {
+        PreviewFrame frame = display.previewFrame(maxEdge, qualityPercent / 100f);
+        if (frame == null || frame.jpeg().length == 0) {
             respond(AgentProtocol.OK + "\t0", null);
             return;
         }
-        respond(AgentProtocol.OK + "\t" + bytes.length, bytes);
+        Rectangle r = frame.surface();
+        respond(AgentProtocol.OK + "\t" + frame.jpeg().length
+            + "\t" + r.x + "\t" + r.y + "\t" + r.width + "\t" + r.height, frame.jpeg());
     }
 
     /** A frame as PNG — lossless, because these pixels are what the vision stack matches templates against. */

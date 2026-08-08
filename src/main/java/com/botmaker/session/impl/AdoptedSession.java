@@ -206,10 +206,10 @@ public final class AdoptedSession implements DesktopSession {
         return link.captureScreen();
     }
 
-    /** Straight through to the link — see {@link com.botmaker.session.remote.DisplayLink#previewJpeg}. */
+    /** Straight through to the link — see {@link com.botmaker.session.remote.DisplayLink#previewFrame}. */
     @Override
-    public byte[] previewJpeg(int maxEdge, float quality) {
-        return link.previewJpeg(maxEdge, quality);
+    public com.botmaker.session.PreviewFrame previewFrame(int maxEdge, float quality) {
+        return link.previewFrame(maxEdge, quality);
     }
 
     @Override

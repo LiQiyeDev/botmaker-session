@@ -1,5 +1,6 @@
 package com.botmaker.session.remote;
 
+import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.impl.NestedSession;
 
 import com.botmaker.shared.Diag;
@@ -101,12 +102,21 @@ public final class RemoteDisplay implements DisplayLink {
 
     /**
      * Asks the agent for an already-encoded preview instead of a PNG it would have to decode — see
-     * {@link DisplayLink#previewJpeg}. An empty payload is the agent's "no frame", including a blank root.
+     * {@link DisplayLink#previewFrame}. An empty payload is the agent's "no frame".
+     *
+     * <p>The rect comes back on the response line because the agent, not this side, chose which surface to
+     * grab: it may be the root or it may be a window, and a caller that assumed the former would tag a
+     * window's pixels with the screen's origin. {@code quality} goes out as a percentage because every
+     * protocol field is an integer; see {@link AgentProtocol}.
      */
     @Override
-    public byte[] previewJpeg(int maxEdge, float quality) {
-        Response r = call("previewRoot", maxEdge, Math.round(Math.min(1f, Math.max(0f, quality)) * 100));
-        return r == null || r.payload.length == 0 ? null : r.payload;
+    public PreviewFrame previewFrame(int maxEdge, float quality) {
+        Response r = call("preview", maxEdge, Math.round(Math.min(1f, Math.max(0f, quality)) * 100));
+        if (r == null || r.payload.length == 0) {
+            return null;
+        }
+        Rectangle surface = new Rectangle(r.asInt(1, 0), r.asInt(2, 0), r.asInt(3, 0), r.asInt(4, 0));
+        return surface.isEmpty() ? null : new PreviewFrame(r.payload, surface);
     }
 
     @Override

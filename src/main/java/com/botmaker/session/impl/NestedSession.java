@@ -2,6 +2,7 @@ package com.botmaker.session.impl;
 
 import com.botmaker.session.Capability;
 import com.botmaker.session.DesktopSession;
+import com.botmaker.session.PreviewFrame;
 import com.botmaker.session.SessionHealth;
 import com.botmaker.session.SessionKeyboard;
 import com.botmaker.session.SessionPointer;
@@ -156,6 +157,12 @@ public final class NestedSession implements DesktopSession {
     /** The launched app's captured stdout+stderr, or {@code null} until something has been launched. */
     private volatile AppOutputLog appLog;
     private volatile boolean closed;
+
+    /** How long an {@link #x11Capturable()} answer is reused; a frame loop asks it 24 times a second. */
+    private static final long CAPTURABLE_TTL_MS = 1000;
+
+    private volatile boolean capturable = true;
+    private volatile long capturableAt;
 
     private NestedSession(String id, SessionReaper reaper, SessionDisplay display,
                           DisplayLink link, Options options, SessionBus bus) {
@@ -391,20 +398,36 @@ public final class NestedSession implements DesktopSession {
     }
 
     /**
-     * {@code false} once this display serves a Wayland socket of its own — the same condition that earns
-     * {@link Capability#WAYLAND_CLIENTS}, read here as its consequence rather than its benefit.
+     * {@code false} once this display has <b>no mapped X11 client at all</b> — which is what a Wayland-only
+     * payload looks like from here, and the only thing about it that is observable.
      *
-     * <p>It is deliberately the <em>capability</em> and not "is a Wayland client actually connected": nothing on
-     * this side can see a client's surface, and the cost of the two errors is wildly asymmetric. Answering
-     * {@code false} for a gamescope session that turns out to be hosting an ordinary X11 game costs a consumer
-     * one look at its next-best source; answering {@code true} for one hosting Waydroid costs a black stream
-     * with no error anywhere to explain it — the reported "the pilot shows nothing". Consumers are expected to
-     * keep the session as their floor (see {@code PilotRoutes}), so the conservative answer degrades to a
-     * better source or to this same session, never past it to the user's real desktop.
+     * <p>This was originally "does the display serve a Wayland socket", reading {@link Capability#WAYLAND_CLIENTS}
+     * as its consequence. That proxy is <em>constant</em>: {@code GamescopeDisplay} passes
+     * {@code --expose-wayland} unconditionally, so it answered {@code false} for every gamescope session,
+     * including a plain X11 game whose window captures perfectly well. Both call sites — the pilot's route
+     * resolver and {@link #openVideoStream} — then took the fallback for a session that never needed one, which
+     * is how the H.264 path came to be dead code on the only backend it was built for. Counting mapped clients
+     * answers the actual question: Waydroid maps none, Firestone maps one.
+     *
+     * <p>The asymmetry the old javadoc argued still holds and still shapes the edges. Answering {@code false}
+     * for a session that could have been captured costs a consumer one look at its next-best source; answering
+     * {@code true} for one hosting Waydroid costs a black stream with no error anywhere to explain it — the
+     * reported "the pilot shows nothing". So an <em>unaskable</em> display ({@code mappedCount() == -1}) counts
+     * as capturable rather than not: that is a broken link, not an empty display, and consumers keep the session
+     * as their floor (see {@code PilotRoutes}) so the answer degrades to a better source or to this same
+     * session, never past it to the user's real desktop.
+     *
+     * <p><b>Memoised</b> for {@value #CAPTURABLE_TTL_MS}&nbsp;ms: the pilot asks this once per frame and each
+     * miss is an X round trip, while the thing it measures changes at the speed of a window mapping.
      */
     @Override
     public boolean x11Capturable() {
-        return display.waylandDisplay() == null;
+        long now = System.currentTimeMillis();
+        if (now - capturableAt > CAPTURABLE_TTL_MS) {
+            capturable = link.mappedCount() != 0;
+            capturableAt = now;
+        }
+        return capturable;
     }
 
     @Override
@@ -541,10 +564,10 @@ public final class NestedSession implements DesktopSession {
         return link.captureScreen();
     }
 
-    /** Straight through to the link, which is where the saving is — see {@link DisplayLink#previewJpeg}. */
+    /** Straight through to the link, which is where the saving is — see {@link DisplayLink#previewFrame}. */
     @Override
-    public byte[] previewJpeg(int maxEdge, float quality) {
-        return link.previewJpeg(maxEdge, quality);
+    public PreviewFrame previewFrame(int maxEdge, float quality) {
+        return link.previewFrame(maxEdge, quality);
     }
 
     /**

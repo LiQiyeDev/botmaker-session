@@ -16,6 +16,50 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — a preview is a picture of a *surface*, and under gamescope that is never the root
+
+### The bug
+
+The pilot went black on every gamescope session. Measured on a live `:1` hosting a fullscreen game:
+an X11 root grab returned **0 of 8160 sampled pixels non-black**, while `captureWindow` on the game's window
+returned a full picture, and `ffmpeg -f x11grab -i :1` averaged **0.04/65535** where `-window_id <xid>`
+averaged **28619**. gamescope's built-in compositor (`steamcompmgr`) redirects every client to its own Wayland
+output and never paints the X root pixmap. Xephyr has no compositor, so its root *is* the picture — which is
+why root-first was right when it was written and silently wrong the moment gamescope became the default
+backend. `Preview.isBlank` then turned "a black frame is sent" into "no frame is sent", which is why the
+symptom was a canvas that stopped updating rather than a black one.
+
+### Done
+
+- **`DisplayLink.previewFrame(maxEdge, quality)` replaces `previewJpeg`** and returns a new
+  `com.botmaker.session.PreviewFrame(byte[] jpeg, Rectangle surface)`. It grabs the root and, when that is
+  blank, the **largest mapped window** instead. Content-driven rather than flagged on the backend: no gamescope
+  knowledge, self-healing if gamescope ever paints its root, and — unlike keying on the session's *attached*
+  window — it still finds a picture during the seconds a launcher chain has swapped one window out.
+- **The rect travels with the bytes.** It used to be assumed to be `screen()`. Under
+  `--force-windows-fullscreen` those coincide, which is exactly what made the assumption survive: on a windowed
+  client it would have misplaced every Interact tap by the window's offset, silently.
+- **The agent serves the verb by calling that same default** (`DisplayAgent.preview`, renamed from
+  `previewRoot`), so the in-process and out-of-process links cannot answer differently. The response line
+  carries the rect: `OK\t<len>\t<x>\t<y>\t<w>\t<h>`.
+- **`NestedSession.x11Capturable()` counts mapped clients** (`link.mappedCount() != 0`, memoised 1 s because a
+  frame loop asks it 24×/s) instead of asking whether the display serves a Wayland socket. That probe was
+  *constant* — `GamescopeDisplay` passes `--expose-wayland` unconditionally — so it answered `false` for every
+  gamescope session including plain X11 games, which demoted the pilot's rung 1 for all of them and made
+  `openVideoStream` dead code on the only backend it was built for. An unaskable display (`-1`) still counts as
+  capturable: that is a broken link, not an empty display.
+- Tests: `remote/PreviewSurfaceTest` (4) pins the choice with no display — painted root wins and grabs no
+  window; black root falls to the largest window *and is tagged with its rect*; a black root with no windows is
+  no frame; a window that grabs black is no frame either.
+
+### Deferred / next
+
+`FfmpegVideoStream` still grabs the root, so H.264 on a gamescope session encodes black. It needs
+`-window_id <xid>` from the same choice this entry makes, plus a stream that ends when that window changes
+(the root could not vanish; a window can).
+
+---
+
 ## 2026-08-08 — H.264 off the session's display, with JPEG as the floor
 
 ### The cost

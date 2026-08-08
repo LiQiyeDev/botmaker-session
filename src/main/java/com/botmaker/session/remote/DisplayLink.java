@@ -2,7 +2,11 @@ package com.botmaker.session.remote;
 
 import com.botmaker.session.impl.NestedSession;
 
+import com.botmaker.session.Preview;
+import com.botmaker.session.PreviewFrame;
+
 import com.botmaker.shared.Diag;
+import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
 
 import java.awt.Rectangle;
@@ -54,25 +58,66 @@ public interface DisplayLink extends NativeController, AutoCloseable {
     BufferedImage captureScreen();
 
     /**
-     * The same root frame as {@link #captureScreen()}, already downscaled to {@code maxEdge} and JPEG-encoded —
-     * or {@code null} when there is no frame to send (including a blank root, see
-     * {@link com.botmaker.session.Preview#isBlank}).
+     * <b>The frame on this display that actually has pixels</b>, downscaled to {@code maxEdge} and JPEG-encoded,
+     * together with the rect it covers — or {@code null} when there is nothing to send.
      *
      * <p>It exists so a preview can be produced <em>where the pixels already are</em>. Over an out-of-process
      * link the default below is the wrong shape: it decodes a PNG this side of the pipe only to re-encode it,
      * which is three codec passes and a payload several times larger than it needs to be, all inside the lock
-     * that input calls queue behind. {@link RemoteDisplay} therefore overrides it with a verb the agent serves.
+     * that input calls queue behind. {@link RemoteDisplay} therefore overrides it with a verb the agent serves —
+     * and the agent serves it by calling <em>this very default</em>, so the choice below is made once for both.
      *
-     * <p>The default keeps every in-process link ({@link LocalDisplay}, tests) correct with no work: grab, then
-     * encode. There is no pipe there, so there is nothing to save.
+     * <p><b>Why it is not simply the root.</b> A session backend that composites — gamescope, whose built-in
+     * {@code steamcompmgr} redirects every client window and paints it to its Wayland output — never paints the
+     * X root pixmap at all. Grabbing the root there returns a perfectly valid, permanently black frame, measured
+     * as 0 of 8160 sampled pixels while a fullscreen game was mapped on the same display. Xephyr has no such
+     * compositor and its root is the whole picture. So the choice is made on <em>content</em> rather than on a
+     * backend flag: take the root, and if it is {@link com.botmaker.session.Preview#isBlank blank}, take the
+     * largest window instead. That needs no knowledge of which backend is running, it self-heals if gamescope
+     * ever paints its root, and — unlike keying on the session's <em>attached</em> window — it still finds a
+     * picture in the seconds a launcher chain has swapped one window out and not yet mapped the next.
      */
-    default byte[] previewJpeg(int maxEdge, float quality) {
+    default PreviewFrame previewFrame(int maxEdge, float quality) {
         BufferedImage root = captureScreen();
         // The blank test belongs on both sides of the seam or the contract differs by implementation: an
         // in-process link would answer a black JPEG where the agent answers "no frame".
-        return com.botmaker.session.Preview.isBlank(root)
-            ? null
-            : com.botmaker.session.Preview.jpeg(root, maxEdge, quality);
+        if (!Preview.isBlank(root)) {
+            return encoded(root, screenSize(), maxEdge, quality);
+        }
+        GenericWindow window = largestWindow();
+        return window == null ? null : encoded(captureWindow(window), window.getRect(), maxEdge, quality);
+    }
+
+    /**
+     * The biggest window this display will show us, or {@code null} when it has none. Biggest by area rather
+     * than the foreground one: a session's game is fullscreen and its launcher's leftovers (a tray icon, an
+     * input-method window — both 16&nbsp;px squares on a live {@code :1}) are not, and asking for the foreground
+     * costs an EWMH round trip to answer a question area already answers.
+     */
+    private GenericWindow largestWindow() {
+        GenericWindow best = null;
+        long bestArea = 0;
+        for (GenericWindow w : getAllWindows(false)) {
+            Rectangle r = w == null ? null : w.getRect();
+            if (r == null) {
+                continue;
+            }
+            long area = (long) r.width * r.height;
+            if (area > bestArea) {
+                bestArea = area;
+                best = w;
+            }
+        }
+        return best;
+    }
+
+    /** {@code img} as a {@link PreviewFrame} over {@code surface}, or {@code null} if either is unusable. */
+    private static PreviewFrame encoded(BufferedImage img, Rectangle surface, int maxEdge, float quality) {
+        if (Preview.isBlank(img) || surface == null || surface.isEmpty()) {
+            return null;
+        }
+        byte[] jpeg = Preview.jpeg(img, maxEdge, quality);
+        return jpeg == null || jpeg.length == 0 ? null : new PreviewFrame(jpeg, surface);
     }
 
     /** The display's size as a rectangle at the origin, or a zero rectangle when it can't be read. */

@@ -82,20 +82,26 @@ public interface DesktopSession extends AutoCloseable {
     }
 
     /**
-     * A <b>lossy, already-encoded</b> frame of {@link #captureScreen()} — JPEG bytes, downscaled to
-     * {@code maxEdge} on the long side — or {@code null} when this session cannot produce one that way.
+     * A <b>lossy, already-encoded</b> preview of this session — JPEG bytes downscaled to {@code maxEdge} on the
+     * long side, <em>and the rect they are a picture of</em> — or {@code null} when this session cannot produce
+     * one that way.
      *
      * <p>It is not a convenience over {@code captureScreen()}: the point is that the encode can happen where
-     * the pixels already are. A nested session's root lives in another process ({@code DisplayAgent}), so the
+     * the pixels already are. A nested session's display lives in another process ({@code DisplayAgent}), so the
      * bytes that reach a phone used to be a PNG encode, a pipe, a PNG decode and a JPEG encode — three codec
      * passes for a preview, two of them on the caller's frame thread while it held the link's request lock.
      * A session that can answer this replaces all three with one, in the process that holds the display.
+     *
+     * <p><b>The rect is not always {@link #screen()}</b>, which is why it is returned rather than assumed — see
+     * {@link PreviewFrame}. A compositing backend never paints its X root, so the frame with pixels on it is a
+     * window, and a caller that tagged it with the screen's origin would misplace every Interact tap on a
+     * client that is not fullscreen.
      *
      * <p>{@code null} is the honest answer for a session that has no such shortcut, and every caller must have
      * the full-frame path anyway (the {@code :0} desktop and an emulator are not encoded remotely). It is
      * <b>never</b> the frame the vision stack matches against — that stays lossless; see {@link Preview}.
      */
-    default byte[] previewJpeg(int maxEdge, float quality) {
+    default PreviewFrame previewFrame(int maxEdge, float quality) {
         return null;
     }
 
@@ -103,7 +109,7 @@ public interface DesktopSession extends AutoCloseable {
      * A live <b>H.264 encode</b> of this session's screen, pushing access units to {@code sink} — or
      * {@code null} when this session cannot produce one.
      *
-     * <p>It is the same argument as {@link #previewJpeg}, one step further. That one moved the encode to where
+     * <p>It is the same argument as {@link #previewFrame}, one step further. That one moved the encode to where
      * the pixels are; this one stops re-encoding the picture at all. A session screen is mostly static between
      * frames, and an inter-coded stream sends the difference: a few kilobytes where a JPEG sends a few hundred,
      * on hardware where there is hardware. What it costs is a decoder on the client, which is why every caller
@@ -124,11 +130,11 @@ public interface DesktopSession extends AutoCloseable {
     /**
      * Whether this session's pixels can be read off an <b>X11</b> root at all.
      *
-     * <p>A session that hosts a compositor of its own (gamescope with {@code --expose-wayland}) can be running a
-     * <em>Wayland-only</em> client — Waydroid's {@code show-full-ui} has no X11 path whatsoever — whose surface
-     * never reaches the embedded Xwayland. {@link #captureScreen()} then succeeds and hands back a perfectly
-     * valid frame of an empty root: black pixels, no error, nothing to distinguish it from a game that happens
-     * to be on a black screen. Consumers that pick a capture source (the pilot's route resolver, the SDK's
+     * <p>A session that hosts a compositor of its own (gamescope) can be running a <em>Wayland-only</em> client
+     * — Waydroid's {@code show-full-ui} has no X11 path whatsoever — whose surface never reaches the embedded
+     * Xwayland. Every X11 read then succeeds and hands back a display with nothing on it: black pixels, no
+     * error, nothing to distinguish it from a game that happens to be on a black screen. Consumers that pick a
+     * capture source (the pilot's route resolver, the SDK's
      * ambient {@link com.botmaker.session.ActiveSession} source) need to know that <em>before</em> they commit
      * to the session, which is why this is a question the session answers rather than a probe each of them
      * rebuilds — and rebuilds differently.
