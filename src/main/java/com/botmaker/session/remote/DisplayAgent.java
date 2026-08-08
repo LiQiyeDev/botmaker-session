@@ -51,7 +51,12 @@ public final class DisplayAgent {
     /** The window the caller declared it is driving; the input backends that need an origin read it. */
     private volatile long drivenWindow;
 
-    private DisplayAgent(DisplayLink display, InputStream in, OutputStream out) {
+    /**
+     * Package-private rather than private so a test can drive {@link #serve} over in-memory streams: the wire
+     * this speaks is hand-encoded on both sides, and the only way to check the two halves agree is to run one
+     * against the other without a display server in between.
+     */
+    DisplayAgent(DisplayLink display, InputStream in, OutputStream out) {
         this.display = display;
         this.in = in;
         this.out = out;
@@ -103,7 +108,8 @@ public final class DisplayAgent {
         System.exit(code);
     }
 
-    private void serve() throws IOException {
+    /** Read, serve, respond until {@code bye} or EOF. Package-private for the wire test; see the constructor. */
+    void serve() throws IOException {
         String line;
         while ((line = readLine(in)) != null) {
             String[] request = AgentProtocol.split(line);

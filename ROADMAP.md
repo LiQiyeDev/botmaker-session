@@ -16,6 +16,56 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — the class inventory audited, and the untested seam gets its test
+
+The question was "are all 40 types in this module pulling weight?". Audited by grep across all four
+modules: **no type is unreferenced**, so there is nothing to delete. `LocalDisplay` in particular reads
+like dead debug code and is not — it is the agent child's *own* X connection (`DisplayAgent.run`), and
+also the documented fallback when no agent can be spawned. The real finding was coverage, not deletion.
+
+**The gap**: the entire out-of-process seam — `DisplayAgent`, `AgentProtocol`, `DisplayAgentProcess`,
+`RemoteDisplay`, `LocalDisplay`, five types and ~1,200 lines — had **zero tests**. That is the module's
+one hand-written wire: `RemoteDisplay` encodes a request by hand and `DisplayAgent` decodes it by hand,
+and nothing but agreement between those two halves keeps a verb's arguments landing in the right
+parameters. A live session cannot tell you which half is wrong; a mismatch arrives as a click at (0,0)
+or a window that "doesn't exist".
+
+**Done**
+
+- **`AgentProtocolTest`** (11 tests) — the framing primitives. What is at stake is *desynchronisation*,
+  not a mangled string: fields are tab-separated and a response is one line plus a declared payload
+  length, so a single unescaped tab in an X title does not corrupt one field, it shifts every field after
+  it and the reader then parses a payload length out of a window's geometry. Pinned: all three separators
+  round-tripping through one field, a hostile title not creating a fifth field, empty fields keeping
+  their positions (`split(-1)`), a truncated escape dropped rather than thrown, every accessor's
+  fallback, window/window-list round trips, and the framing itself — EOF as `null`, an unterminated last
+  line still delivered, `readFully` refusing to invent a short payload.
+- **`DisplayAgentWireTest`** (11 tests) — the seam run in one process: real request lines in, the real
+  `DisplayAgent.serve` in the middle, real response lines out, with a recording stub in place of the
+  `:N` connection. It asserts what the display was *asked to do*, so an argument landing one parameter
+  over fails here instead of on a live display. Covers the two paths a live run reaches only by accident:
+  a verb whose display call **throws** comes back as `ERR` with the stream still usable (the next request
+  is answered normally), and **EOF** ends `serve` rather than spinning. Also: `bye`, an unknown verb
+  answered rather than met with silence (silence leaves the caller blocked on a read while holding the
+  request lock), the `cursor` null-position answer that is deliberately `OK` and not `ERR`, and the
+  field-offset convention where `field(1)` is the payload length so `Response.asInt(n)` reads `n+1`.
+- **The stub is a `java.lang.reflect.Proxy`**, not a hand-written class: `DisplayLink` extends
+  `NativeController`, some forty methods, of which a wire test cares about six — thirty-four empty
+  overrides would bury the four lines that matter.
+- **`DisplayAgent`'s constructor and `serve()` went from private to package-private**, with the reason in
+  their javadoc. That is the whole production change; the alternative was spawning a real child process
+  in a unit test to exercise code that needs no display at all.
+
+**Deferred / next**
+
+- The other four seam types are still untested. `RemoteDisplay`'s **caller** half is the next cheapest
+  and the natural pair to this one — point it at a pipe served by a stub agent and assert the request
+  lines it emits, which would close the loop on both hand-written halves rather than one.
+- `DisplayAgentProcess`'s spawn forms (re-exec vs. `java -cp`) still need a real process to test, so they
+  belong in a live-gated suite rather than this one.
+
+---
+
 ## 2026-08-08 — the scale filter that wasn't scaling, and a cursor for `:N`
 
 The fidelity probe's first baseline said the H.264 path was *worse* than the JPEG floor it replaces on
