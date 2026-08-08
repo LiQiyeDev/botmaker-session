@@ -28,11 +28,42 @@ class SessionBackendsTest {
     }
 
     @Test
-    void everyLaunchKindPrefersGamescope() {
+    void everyGameKindPrefersGamescope() {
         for (LaunchKind kind : LaunchKind.values()) {
+            if (kind == LaunchKind.EMULATOR_APP) {
+                continue;   // brings its own gamescope; see theEmulatorAppIsTheOneKindThatWantsXephyr
+            }
             assertEquals(NestedSession.Backend.GAMESCOPE, SessionBackends.preferredBackend(spec(kind, "token")),
                     kind + " must resolve to gamescope — Xephyr is reachable only through the explicit pin");
         }
+    }
+
+    /**
+     * The one exception, and not a fallback: an emulator app's child command <em>is</em> a gamescope (Waydroid
+     * is a Wayland client and needs a compositor), so the display it opens on has to be a plain X server or
+     * gamescope would be nested inside gamescope for nothing.
+     */
+    @Test
+    void theEmulatorAppIsTheOneKindThatWantsXephyr() {
+        assertEquals(NestedSession.Backend.XEPHYR,
+                SessionBackends.preferredBackend(spec(LaunchKind.EMULATOR_APP, "com.foo@Waydroid")));
+    }
+
+    /**
+     * And that display must not manage windows: openbox would frame and resize gamescope's window exactly as
+     * the desktop's window manager does on {@code :0} — measured there at 1280×661 for a 1080×1920 container,
+     * which is the letterboxed third-resolution image the private display exists to avoid.
+     */
+    @Test
+    void anEmulatorAppGetsAnExplicitlyUnmanagedDisplay() {
+        NestedSession.Options emulator = SessionBackends.optionsFor(
+                spec(LaunchKind.EMULATOR_APP, "com.foo@Waydroid"), NestedSession.Backend.XEPHYR, 1080, 1920);
+        assertTrue(emulator.hasExplicitWindowManager(), "must be a stated 'none', not an unstated default");
+        assertTrue(emulator.windowManagerCommand().isEmpty());
+
+        NestedSession.Options game =
+                SessionBackends.optionsFor(spec(LaunchKind.EXE, "/usr/bin/game"), NestedSession.Backend.XEPHYR, 800, 600);
+        assertFalse(game.hasExplicitWindowManager(), "a game keeps the backend default (openbox when installed)");
     }
 
     @Test

@@ -29,7 +29,11 @@ import com.botmaker.shared.Diag;
 import com.botmaker.shared.Executables;
 import com.botmaker.shared.capture.GenericWindow;
 import com.botmaker.shared.capture.NativeController;
+import com.botmaker.shared.emulator.EmulatorInstance;
+import com.botmaker.shared.emulator.EmulatorInstances;
+import com.botmaker.shared.emulator.EmulatorLauncher;
 import com.botmaker.shared.launch.GameLauncher;
+import com.botmaker.shared.launch.LaunchKind;
 import com.botmaker.shared.launch.HostLauncherProbe;
 import com.botmaker.shared.launch.LaunchCommands;
 import com.botmaker.shared.launch.LaunchIsolation;
@@ -70,7 +74,10 @@ import java.util.function.Consumer;
  * com.botmaker.shared.launch.LaunchCommands}): {@code exe:}/{@code cli:} directly, and the store launchers
  * that expose a CLI form ({@code heroic:}/{@code steam:}/{@code faugus:}) run as our own child so they inherit
  * {@code DISPLAY=:N} instead of the daemon-routed protocol URL, which a launcher already on {@code :0} would
- * swallow. Kinds with no CLI form — {@code epic:} (URL-only) and {@code emu-app:} (ADB) — cannot map onto a
+ * swallow. {@code emu-app:} joins them for <b>Waydroid</b>, whose UI is a Wayland client started under our own
+ * gamescope and so has a child command like any other; every other Android product is reached over ADB after
+ * something else started it. Kinds with no CLI form — {@code epic:} (URL-only), an emulator app on any other
+ * product — cannot map onto a
  * private display and are refused (a loud failure, never a silent {@code :0} fallback).
  */
 public final class NestedSession implements DesktopSession {
@@ -529,7 +536,10 @@ public final class NestedSession implements DesktopSession {
         }
         // Only the forms that exist here: the ladder's missing rungs would each be spawned, exit at once, and be
         // reported as a window timeout they never waited for.
-        List<List<String>> candidates = LaunchIsolation.runnableLadder(spec);
+        // Sized: an emulator app's rung is the compositor Android renders into, so it must match this display
+        // and not the container's own idea of its framebuffer.
+        List<List<String>> candidates =
+            LaunchIsolation.runnableLadder(spec, display.width(), display.height());
         stopHostInstance(spec);
 
         long windowTimeoutMs = windowTimeoutFor(spec, options);
@@ -886,6 +896,10 @@ public final class NestedSession implements DesktopSession {
      * entirely is handled one step earlier, by {@link HostLauncherProbe} refusing the launch outright.
      */
     private void stopHostInstance(LaunchSpec spec) {
+        if (spec.kind() == LaunchKind.EMULATOR_APP) {
+            stopHostEmulator(spec);
+            return;
+        }
         if (!Launcher.isRunning(spec)) {
             return;
         }
@@ -896,6 +910,26 @@ public final class NestedSession implements DesktopSession {
         } else {
             Diag.error("[Session] " + id + ": " + spec.spec() + " is running on the host but can't be stopped by name");
         }
+    }
+
+    /**
+     * Stop the whole emulator <em>session</em> before launching our own, not just the app.
+     *
+     * <p>This is the opposite of the rule above, and for a reason that only holds here: there is one Android
+     * container per machine, and {@code waydroid app launch} talks to whichever session is already up. Leave
+     * the host's running and our launch is a message to the compositor on {@code :0} — the app appears on the
+     * user's desktop and this display waits out its whole window budget for something that was never coming.
+     * Killing the app alone would not help; it is the session that owns the surface.
+     *
+     * <p>Best-effort and quiet when there is nothing to stop: a cold container is the common case.
+     */
+    private void stopHostEmulator(LaunchSpec spec) {
+        EmulatorInstance instance = EmulatorInstances.byName(spec.emulatorInstance()).orElse(null);
+        if (instance == null || !instance.canStop()) {
+            return;
+        }
+        Diag.log("[Session] " + id + ": stopping the host " + instance.brand() + " session so ours owns the container");
+        EmulatorLauncher.stop(instance);
     }
 
     /** All window ids currently on the nested display — the "before" snapshot the new-window attach diffs against. */
@@ -1114,8 +1148,16 @@ public final class NestedSession implements DesktopSession {
             return windowManagerCommand == null ? List.of() : windowManagerCommand;
         }
 
-        /** Whether a caller stated a window manager (including {@link #withoutWindowManager()}'s "none"). */
-        boolean hasExplicitWindowManager() {
+        /**
+         * Whether a caller stated a window manager (including {@link #withoutWindowManager()}'s "none").
+         *
+         * <p>Public because it is the only thing that distinguishes "none, deliberately" from "nothing said,
+         * use the backend default" — {@link #windowManagerCommand()} answers an empty list for both. That
+         * difference decides whether a Xephyr display runs openbox, which for an emulator app is the
+         * difference between gamescope's window covering the screen and being framed and resized by a window
+         * manager.
+         */
+        public boolean hasExplicitWindowManager() {
             return windowManagerCommand != null;
         }
         public Map<String, String> extraEnv() { return extraEnv; }

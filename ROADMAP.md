@@ -16,6 +16,69 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — Waydroid runs on a private display, at the resolution the project asked for
+
+Waydroid was black in the pilot and took ~1 s a frame, because every one of its frames came from ADB
+`screencap` — which under a GPU-composited container returns black. Grabbing gamescope's desktop window
+instead is not the fix: it is occlusion-prone, and the desktop's window manager sizes that window, so a
+1080×1920 container arrived as a ~372×661 letterboxed strip (measured, about a third of the linear
+resolution). Waydroid is a Wayland-only client and maps no X window of its own, so its pixels exist only in
+gamescope's output — the question is really *who decides how big that output is*. On the desktop, the WM. On a
+private display, us.
+
+### Done
+
+- **`SessionBackends.preferredBackend` answers XEPHYR for `EMULATOR_APP`** — the one exception to
+  "always gamescope", and not a fallback: a Waydroid launch *is* a gamescope (it is the child command), so
+  choosing gamescope as the display too would nest one in the other for nothing. Xephyr is the plain X server
+  it opens its window on, and a real X server's framebuffer is the size we asked for regardless of how the
+  window showing it is treated. Without gamescope the ladder is empty and the launch is still refused loudly.
+- **`SessionBackends.optionsFor(spec, backend, w, h)`** — one place deciding backend + window manager + size,
+  now shared by Studio's `BackgroundLauncher` and the SDK's `SessionBootstrap` instead of each building
+  `Options` itself. An emulator app gets `withoutWindowManager()`: the only client on that display is
+  gamescope's window, and openbox would frame and resize it exactly as the desktop's WM does.
+  `Options.hasExplicitWindowManager()` is public because it is the only thing distinguishing "none,
+  deliberately" from "unstated, use the default" — `windowManagerCommand()` is empty for both.
+- **Xephyr no longer runs with `-resizeable`.** That flag ties the root to Xephyr's *window*, and the window
+  belongs to the user's desktop: asked for 1080×1920 on a 1080-tall screen, the WM clamped it and the
+  framebuffer shrank with it — a session whose `screen()` said 1080×1920 handed back **1080×661** frames.
+  A private display's size is the project's reference resolution, which is what every template was captured
+  at; it is not the desktop's to negotiate.
+- **`NestedSession.stopHostEmulator`** — an emulator app stops the whole host *session* first, not the app.
+  There is one container per machine and `waydroid app launch` talks to whichever session is up, so leaving
+  the host's running means the app appears on the user's desktop while the private display waits out its
+  window budget for something that was never coming.
+- `NestedSession.launchAndAttach` asks for a ladder sized to `display.width()/height()` (see
+  `botmaker-shared/ROADMAP.md`).
+
+### Verified live
+
+Driven end to end through the real path against a running container, not asserted from the code:
+
+```
+kind=EMULATOR_APP → backend=XEPHYR → isolatable=true
+ladder  = env -u WAYLAND_DISPLAY gamescope --backend sdl -W 1080 -H 1920 -w 1080 -h 1920 --expose-wayland
+          waydroid app launch com.zjcs.android.us
+options = XEPHYR 1080x1920 wm=[]     display = :1  screen=1080x1920
+attached to 'gamescope' on :1   x11Capturable=true   videoSurface=1080x1920
+FRAME = 1080x1920  blank=false
+```
+
+Two defects on the way there were found only by running it, and both are now covered by the notes above: the
+empty `WAYLAND_DISPLAY` that killed gamescope at startup, and `-resizeable` shrinking the framebuffer.
+
+### Deferred / next
+
+- **Input is unverified.** The route now wins `PilotRoutes` rung 1, so taps go through the session pointer
+  (XTest on `:N` → gamescope → Waydroid) rather than ADB. gamescope's window covers the root at (0,0) so
+  `ROOT_ABSOLUTE` warping should land 1:1, but no tap has been landed in Android yet. If it doesn't, the
+  fallback is ADB gestures for this route — `AdbEmulatorSurface`'s `tap`/`drag`/`scroll` are unchanged and
+  correct; only its `grab()` was ever the problem.
+- The container still boots at whatever `persist.waydroid.width/height` say. Making *those* follow the project
+  is the next phase (`WaydroidResolution.apply()` has been written and unused since it was added).
+
+---
+
 ## 2026-08-08 — the H.264 encoder is aimed at the same surface the preview is
 
 Completes the entry below, whose **Deferred / next** this was: the JPEG path had learned that the pixels are

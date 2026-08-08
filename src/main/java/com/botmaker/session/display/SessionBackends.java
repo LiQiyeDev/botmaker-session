@@ -40,15 +40,24 @@ public final class SessionBackends {
 
     /**
      * The backend a target of this {@code spec} wants, irrespective of what's installed:
-     * {@link NestedSession.Backend#GAMESCOPE}, for every {@link LaunchKind} and for a {@code null} spec.
+     * {@link NestedSession.Backend#GAMESCOPE} for a game and for a {@code null} spec,
+     * {@link NestedSession.Backend#XEPHYR} for {@link LaunchKind#EMULATOR_APP EMULATOR_APP}.
      *
-     * <p>It takes the spec anyway because the question is genuinely per-target — a future backend chosen for,
-     * say, {@link LaunchKind#EMULATOR_APP EMULATOR_APP} would be decided here — and because every caller already
-     * has a spec in hand. What it must <em>not</em> do again is answer {@link NestedSession.Backend#XEPHYR} for
-     * the kinds nobody tests: see the class javadoc.
+     * <p><b>The emulator exception is not a fallback.</b> A Waydroid launch <em>is</em> a gamescope — the
+     * child command is {@code gamescope --backend sdl … waydroid app launch <pkg>}, because Waydroid's UI is a
+     * Wayland client and needs a compositor of its own. Choosing gamescope as the display too would nest
+     * gamescope inside gamescope for no gain. Xephyr is the plain X server that gamescope then opens its
+     * window on, and — being a real X server — its framebuffer is the size we asked for regardless of how big
+     * the window showing it happens to be. That is what makes the capture full-resolution.
+     *
+     * <p>This is the exception the class javadoc's "no silent Xephyr fallback" rule allows for: it is a
+     * measured, per-kind answer, not a degradation when gamescope is missing. Without gamescope the emulator
+     * ladder is empty and the launch is refused loudly, exactly as before.
      */
     public static NestedSession.Backend preferredBackend(LaunchSpec spec) {
-        return NestedSession.Backend.GAMESCOPE;
+        return spec != null && spec.kind() == LaunchKind.EMULATOR_APP
+                ? NestedSession.Backend.XEPHYR
+                : NestedSession.Backend.GAMESCOPE;
     }
 
     /**
@@ -74,6 +83,30 @@ public final class SessionBackends {
     /** Whether {@code backend}'s host binary ({@link NestedSession.Backend#binaryName()}) is on {@code PATH}. */
     public static boolean isAvailable(NestedSession.Backend backend) {
         return onPath(backend.binaryName());
+    }
+
+    /**
+     * The session shape for {@code spec} on {@code backend} at a given size — the single place the
+     * backend/window-manager/size combination is decided, so Studio's launcher and the SDK's bootstrap cannot
+     * answer it differently.
+     *
+     * <p><b>An emulator app gets no window manager.</b> The one client on that display is gamescope's own
+     * window, and openbox would do to it exactly what the desktop's window manager does on {@code :0}: give it
+     * a frame and a size of its choosing. Unmanaged, it covers the screen exactly, which is the whole reason
+     * the display is private — the framebuffer, gamescope's internal resolution and Android's are one number.
+     * Nothing is lost: the WM is there for EWMH focus, and this session's input goes to the only window there
+     * is.
+     *
+     * <p>Pure, so the mapping is unit-tested without an X server.
+     */
+    public static NestedSession.Options optionsFor(LaunchSpec spec, NestedSession.Backend backend,
+                                                   int width, int height) {
+        NestedSession.Options options = switch (backend) {
+            case GAMESCOPE -> NestedSession.Options.gamescope(width, height);
+            case XEPHYR -> NestedSession.Options.xephyr(width, height);
+        };
+        boolean emulator = spec != null && spec.kind() == LaunchKind.EMULATOR_APP;
+        return emulator ? options.withoutWindowManager() : options;
     }
 
     /** The window manager to run inside a {@link NestedSession.Backend#XEPHYR} display, when it is installed. */

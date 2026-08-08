@@ -89,11 +89,18 @@ public final class NestedDisplay implements SessionDisplay {
         try {
             out = SessionReaper.tempOutputFile("botmaker-xephyr-");
             // -displayfd 1: Xephyr picks a free display and writes "<n>\n" to fd 1. -ac drops access control
-            // (a private local display), -noreset keeps it alive across the last client, -resizeable lets the
-            // game size the root. No ":N" is passed — the whole point is that Xephyr, not us, allocates it.
+            // (a private local display), -noreset keeps it alive across the last client. No ":N" is passed —
+            // the whole point is that Xephyr, not us, allocates it.
+            //
+            // Deliberately NOT -resizeable. That flag lets the root follow Xephyr's *window*, and the window
+            // belongs to the user's desktop: asked for 1080x1920 on a 1080-tall screen, the window manager
+            // clamped it and the framebuffer shrank with it — a session whose screen() said 1080x1920 handed
+            // back 1080x661 frames. A private display's size is the project's reference resolution, which is
+            // what every template was captured at; it is not the desktop's to negotiate. The window may be
+            // clipped or scrolled on screen, and the pixels behind it are still all there.
             server = reaper.launch(SessionUnit.XEPHYR,
                 List.of(Backend.XEPHYR.binaryName(), "-displayfd", "1", "-screen", width + "x" + height,
-                    "-ac", "-noreset", "-resizeable"),
+                    "-ac", "-noreset"),
                 Map.of(),
                 Redirect.appendTo(out));
         } catch (Exception e) {
