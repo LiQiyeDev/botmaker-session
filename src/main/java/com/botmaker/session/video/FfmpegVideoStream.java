@@ -88,6 +88,7 @@ public final class FfmpegVideoStream implements VideoStream {
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Process current;
     private volatile boolean producing;
+    private volatile Encoder chosen;
 
     private FfmpegVideoStream(Consumer<VideoPacket> sink, Spawner spawner, PaintedSurface surface) {
         this.sink = sink;
@@ -127,6 +128,21 @@ public final class FfmpegVideoStream implements VideoStream {
     @Override
     public String codec() {
         return CODEC;
+    }
+
+    /**
+     * The ffmpeg encoder that actually produced this stream ({@code h264_nvenc}, {@code h264_vaapi} or
+     * {@code libx264}), or {@code null} before one has.
+     *
+     * <p>Not the same question as {@link #codec()}, which is the bitstream profile and is pinned. This is
+     * <em>which</em> of the candidate walk's rungs won, and it is only knowable at run time: a hardware encoder
+     * that is listed, licensed and initialisable can still fail to produce a packet on the machine in front of
+     * you. Worth reporting because the rung explains the picture — NVENC's CBR 6M and libx264's CRF 26 do not
+     * lose the same things — so a fidelity number without it is not reproducible.
+     */
+    public String encoder() {
+        Encoder e = chosen;
+        return e == null ? null : e.codecName;
     }
 
     @Override
@@ -194,6 +210,7 @@ public final class FfmpegVideoStream implements VideoStream {
                 process.destroy();
                 return false;
             }
+            chosen = encoder;
             Diag.log("[Session] video: encoding " + display + " with " + encoder.codecName);
             reader.join();               // this candidate owns the stream now; stay until its encoder ends
             return true;

@@ -16,6 +16,48 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-08 — the pilot's picture has a number now (`FidelityProbeTest`)
+
+"Does the pilot look right" had no answer, because it is two questions with opposite ones. The new
+live-gated harness separates them and treats them differently — geometry asserted, samples reported.
+
+**Done**
+
+- **`FidelityProbeTest` + `FidelityPattern`** (`src/test/java/…/video/`), opt-in behind
+  `-Dbotmaker.live=true` exactly like the other live suites, `-Dbotmaker.fidelity.size=1080x1920` for the
+  portrait case. It brings up a WM-less Xephyr session, paints a known pattern on it from a child JVM, and
+  measures three stages against one truth: `captureScreen()` (lossless — and the frame a *bot* matches
+  against), `Preview.jpeg`, and a real `openVideoStream` decoded back with ffmpeg. Nothing stubbed; a stage
+  that is not the production path measures nothing. Artefacts to `~/.botmaker/fidelity/<ts>/`.
+- **Geometry is the assertion**: five fiducials located by search (not by seed — a seeded search reports a
+  hit on whatever green is nearest and cannot catch a crop), ≤1px lossless, ≤2px lossy. Measured 0.71px
+  worst at every stage on the first live run, i.e. rounding.
+- **The locator is plain Java.** OpenCV would do it in a line and is excluded from this module on purpose
+  (`NoOcvOnTheClasspathTest` asserts it is not resolvable even in tests). A hundred lines of flood fill is
+  the cheaper side of that trade — noted here because the plan that led to this work assumed the opposite.
+- **`FfmpegVideoStream.encoder()`** — which rung of the candidate walk actually won. Not the same question
+  as `codec()`, which is the pinned bitstream profile; this is only knowable at run time, and a fidelity
+  number without it is not reproducible.
+- **Per-region metrics, after the first run showed why.** Whole-frame PSNR said 22.8 dB while SSIM said
+  0.97 — the two disagreeing because a 1px checkerboard at a tenth of the frame dominates a squared-error
+  figure and barely touches a structural one. Reporting the band and a fiducial-free gradient slab
+  separately is what makes the numbers mean anything.
+
+**What it found on the first run** (1280×720, `h264_nvenc`; table in `docs/display-pipeline.md` §10):
+on game-like content **H.264 beats JPEG** (46.8 dB vs 43.3, at a fraction of the bytes), and on pixel-fine
+detail it is far worse (12.9 dB vs 34.0) — `-preset p1 -rc cbr -b:v 6M` flattens a 1px pattern completely.
+In a session that is thin UI rules and small text, and it is the first thing to suspect behind a "glitchy"
+Waydroid screen that does not actually tear: **blur from the encoder settings, not tearing from the grab.**
+
+**Deferred / next**
+
+- Act on that: try `flags=bicubic` in place of `fast_bilinear`, a higher `MAX_EDGE` for sessions, or a
+  quality-targeted rate control for a mostly-static screen. Re-run the probe against this baseline.
+- The out-of-process seam (`DisplayAgent`, `AgentProtocol`, `DisplayAgentProcess`, `RemoteDisplay`,
+  `LocalDisplay`) still has no tests — see the inventory audit note.
+
+---
+
 ## 2026-08-08 — a launch prepares the host before it builds an argv
 
 **Done**
