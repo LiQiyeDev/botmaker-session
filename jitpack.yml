@@ -2,8 +2,11 @@ jdk:
   - openjdk21
 install:
   # The committed pom pins botmaker.shared.version=0.0.0-SNAPSHOT (the reactor/dev value). JitPack can't
-  # resolve a SNAPSHOT, so resolve the newest published shared release tag at build time and inject it via
-  # -D — the committed pom is never edited. release.sh releases shared before session and waits for its
-  # JitPack build, so "newest shared tag" is the intended one here. Same contract as botmaker-sdk's.
-  - SHARED=$(git ls-remote --tags --refs https://github.com/LiQiyeDev/botmaker-shared 'v*' | awk -F/ '{print $NF}' | sort -V | tail -1)
-  - mvn install -DskipTests -Dmaven.javadoc.skip=true -B -Dbotmaker.shared.version=${SHARED:-v0.0.4}
+  # resolve a SNAPSHOT, so the shared tag is injected via -D at build time — the committed pom is never
+  # edited. The tag comes from .deps.env, written by the umbrella release.sh in this release's own commit,
+  # so it is the shared release this session tag was actually cut against rather than whatever `git
+  # ls-remote --tags | tail -1` happens to return. JitPack builds that shared tag on demand if its build
+  # hasn't run yet, which is what lets release.sh tag shared and session back to back.
+  # The fallback covers a hand-made tag cut without release.sh (no .deps.env in the tree).
+  - . ./.deps.env || true
+  - mvn install -DskipTests -Dmaven.javadoc.skip=true -B -Dbotmaker.shared.version=${SHARED_TAG:-v0.0.15}

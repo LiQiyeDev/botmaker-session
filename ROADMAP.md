@@ -16,6 +16,23 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-21 — session's JitPack build stops guessing its shared tag
+
+**Changed:** `jitpack.yml`, new `.deps.env`.
+
+**Done**
+
+- **`jitpack.yml` reads `SHARED_TAG` from a committed `.deps.env` instead of resolving it with
+  `git ls-remote --tags | sort -V | tail -1`.** Same change, same reasoning, as `botmaker-sdk`'s — see
+  that ROADMAP's entry of the same date. The short version: the guess meant "newest published shared
+  tag", so the umbrella `release.sh` had to wait for shared's JitPack build before tagging session;
+  with the ref pinned in session's own release commit, JitPack builds that shared tag on demand and the
+  two tags go out back to back.
+- The committed pom is unchanged: `botmaker.shared.version` stays `0.0.0-SNAPSHOT` and the ref arrives
+  via `-D`. `${SHARED_TAG:-v0.0.15}` still covers a tag cut by hand without `release.sh`.
+
+---
+
 ## 2026-08-08 — backlog: measure Waydroid on gamescope instead of Xephyr
 
 Not implemented — recorded from a user report that **Waydroid is laggy while a gamescope-only launch is
