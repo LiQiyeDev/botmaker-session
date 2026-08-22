@@ -25,8 +25,13 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!--
-          Defaults to the snapshot the reactor (and a local `mvn install`) produces; the release script bumps
-          it to the released shared tag so a JitPack build resolves a real one. Same contract as sdk/studio.
+          Defaults to the snapshot the reactor (and a local `mvn install`) produces; jitpack.yml injects the
+          released shared tag via -D so a JitPack build resolves a real one. Same contract as sdk/studio.
+
+          The injection only reaches CONSUMERS because of flatten-maven-plugin below: Maven publishes the
+          COMMITTED pom, not the effective one, so before flatten the published pom said
+          botmaker-shared:${botmaker.shared.version} with the property still at 0.0.0-SNAPSHOT and nothing
+          downstream could resolve it. See the plugin comment.
         -->
         <botmaker.shared.version>0.0.0-SNAPSHOT</botmaker.shared.version>
     </properties>
@@ -90,4 +95,48 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Flatten Plugin: publish a pom whose ${...} are already resolved.
+
+                 Without it, `mvn install -Dbotmaker.shared.version=v0.0.18` (what jitpack.yml runs) affects
+                 only this build's own resolution — Maven installs the COMMITTED pom, so the published
+                 botmaker-session:<tag> declared botmaker-shared:0.0.0-SNAPSHOT and could not be resolved by
+                 anyone without a local build in ~/.m2. Flatten writes target/.flattened-pom.xml with the
+                 effective values and installs that instead.
+
+                 flattenMode=oss drops build+profiles (this module has neither that a consumer reads) and
+                 strips repositories, hence the explicit keep — the jitpack.io repo above is how a consumer
+                 reaches the transitive shared. Do not copy this to botmaker-shared: its OS-activated native
+                 profiles are part of what consumers resolve. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <flattenMode>oss</flattenMode>
+                    <pomElements>
+                        <repositories>keep</repositories>
+                    </pomElements>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

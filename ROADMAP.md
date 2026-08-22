@@ -16,6 +16,23 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-22 — the published session pom names a real shared tag (it never did)
+
+**Changed:** `pom.xml` (new `<build>` with flatten-maven-plugin, property comment), `.gitignore`.
+
+**Done**
+
+- **Fixed the same defect the SDK had** (see `../botmaker-sdk/ROADMAP.md` for the full write-up, and for
+  how it surfaced): `mvn install -Dbotmaker.shared.version=v0.0.18` installs the **committed** pom, so
+  every published `botmaker-session:<tag>` declared `botmaker-shared:0.0.0-SNAPSHOT` and could not be
+  resolved by anyone without a local build in `~/.m2`. The `-D` was steering the build and nothing else.
+- **`flatten-maven-plugin` 1.6.0**, in this module's first-ever `<build>` section. `flattenMode=oss` with
+  `<repositories>keep</repositories>`. Verified the flattened pom preserves the OpenCV/Tess4J
+  `<exclusions>` on the shared dependency — those are what make "standalone" true, and losing them would
+  have quietly re-added a 100 MB OpenCV payload to every consumer.
+
+---
+
 ## 2026-08-21 — session's JitPack build stops guessing its shared tag
 
 **Changed:** `jitpack.yml`, new `.deps.env`.
