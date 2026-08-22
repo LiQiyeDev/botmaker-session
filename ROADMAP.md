@@ -30,6 +30,10 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
   `<repositories>keep</repositories>`. Verified the flattened pom preserves the OpenCV/Tess4J
   `<exclusions>` on the shared dependency — those are what make "standalone" true, and losing them would
   have quietly re-added a 100 MB OpenCV payload to every consumer.
+- **`jitpack.yml` now requires `SHARED_TAG` instead of defaulting it to `v0.0.15`.** Flatten changes what a
+  stale fallback costs: it used to affect only the build (the published pom kept the unresolved property),
+  and it would now be baked into the published pom. A tag cut by hand without `.deps.env` fails with a
+  readable message rather than publishing a pin at a long-dead shared.
 
 ---
 

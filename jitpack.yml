@@ -7,6 +7,12 @@ install:
   # so it is the shared release this session tag was actually cut against rather than whatever `git
   # ls-remote --tags | tail -1` happens to return. JitPack builds that shared tag on demand if its build
   # hasn't run yet, which is what lets release.sh tag shared and session back to back.
-  # The fallback covers a hand-made tag cut without release.sh (no .deps.env in the tree).
-  - . ./.deps.env || true
-  - mvn install -DskipTests -Dmaven.javadoc.skip=true -B -Dbotmaker.shared.version=${SHARED_TAG:-v0.0.15}
+  #
+  # The -D reaches CONSUMERS only because pom.xml runs flatten-maven-plugin: Maven publishes the committed
+  # pom, not the effective one. That is also why SHARED_TAG is now REQUIRED rather than defaulted. The old
+  # `${SHARED_TAG:-v0.0.15}` fallback was harmless while the published pom kept the unresolved property (a
+  # stale -D only affected the build); with flatten it would be silently BAKED INTO the published pom,
+  # pointing every consumer of a hand-cut tag at a long-dead shared. Failing loudly is strictly better.
+  - . ./.deps.env
+  - '[ -n "${SHARED_TAG:-}" ] || { echo "ERROR: .deps.env must pin SHARED_TAG. Cut releases with the umbrella release.sh, which writes it into the release commit." >&2; exit 1; }'
+  - mvn install -DskipTests -Dmaven.javadoc.skip=true -B -Dbotmaker.shared.version=$SHARED_TAG
