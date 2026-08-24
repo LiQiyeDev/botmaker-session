@@ -16,6 +16,22 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-24 — a released tag stops being a bare ref: `CHANGELOG.md` (phase 5 of 12)
+
+**Changed:** `CHANGELOG.md` (new).
+
+**Done**
+
+- **A few bullets per released version**, seeded from each tag's own commits, including the honest record
+  of the same-day re-tags (v0.0.5, v0.0.6 exist so JitPack rebuilt session against a new shared, and say
+  so). The umbrella `release.sh` **refuses a `--session` release with no section for the version being
+  cut** (`check_changelog`, decide pass, no network) and publishes that section as the tag's GitHub
+  Release body (`publish_release`).
+- Not copied into the jar — that is the SDK's arrangement, and only the SDK has a reader for it (Studio's
+  upgrade dialog reads `META-INF/botmaker/whats-new.md` out of the SDK jar it diffs).
+
+---
+
 ## 2026-08-22 — the published session pom names a real shared tag (it never did)
 
 **Changed:** `pom.xml` (new `<build>` with flatten-maven-plugin, property comment), `.gitignore`.
