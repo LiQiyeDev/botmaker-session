@@ -47,12 +47,15 @@
         <!--
           The native window/input plumbing (capture.*) and the launch stack this module drives.
 
-          The exclusions are what make "standalone" true rather than aspirational: shared puts OpenCV
-          (~100 MB of natives) and Tess4J/Tesseract at compile scope so Studio gets the OCR stack
-          transitively without depending on the SDK. The session stack touches neither — only capture.*,
-          launch.*, Diag and Executables — so a consumer who wants a private display is not made to download
-          an OCR engine to get one. Verified rather than assumed: nothing under capture/ or launch/ links an
-          org.opencv or net.sourceforge.tess4j type, so no reachable path can NoClassDefFoundError on them.
+          The exclusion is what makes "standalone" true rather than aspirational: shared puts OpenCV
+          (~100 MB of natives) at compile scope so Studio gets the matching stack transitively without
+          depending on the SDK. The session stack touches it not at all — only capture.*, launch.*, Diag and
+          Executables — so a consumer who wants a private display is not made to download a vision engine to
+          get one. Verified rather than assumed: nothing under capture/ or launch/ links an org.opencv type,
+          so no reachable path can NoClassDefFoundError on it.
+
+          There is no Tess4J exclusion any more: com.botmaker.shared.ocr and its Tesseract dependency moved to
+          botmaker-sdk in SDK 1.2.0, so shared no longer offers an OCR engine to exclude.
 
           dadb is deliberately NOT excluded, and the reason is a real code path rather than tidiness:
           HostSession.launch delegates to shared's Launcher.start, which for an emu-app: target dispatches to
@@ -68,10 +71,6 @@
                 <exclusion>
                     <groupId>org.openpnp</groupId>
                     <artifactId>opencv</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>net.sourceforge.tess4j</groupId>
-                    <artifactId>tess4j</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
