@@ -1,0 +1,66 @@
+# JReleaser — what ONE release of this repository looks like.
+#
+# The split with the umbrella's release.sh is the whole design:
+#
+#   * release.sh knows the CONSTELLATION — which of the eight repositories changed, what each one's next
+#     version is, the order the tags go out in, and which upstream ref each downstream pins. Nothing in
+#     JReleaser can express that: its unit of work is one repository, one version, one release. The
+#     .deps.env this release commit carries is written by release.sh for the same reason.
+#   * this file knows what a release IS — the tag, the GitHub Release, and the notes on it.
+#
+# WHERE THIS RUNS: this repository's own CI, on a version tag, and nowhere else —
+# .github/workflows/ci.yml, the `release` job, through jreleaser/release-action. NOT from the umbrella
+# working copy, and that is measured rather than preferred (2026-08-28): in a submodule checkout `.git` is a
+# FILE (`gitdir: ../.git/modules/<mod>`) and JReleaser's JGit reports "repository not found", while
+# `--git-root-search` gets past it only by resolving the UMBRELLA repository — which would attach this
+# release to the wrong repo. jreleaser-maven-plugin is not used either: it ignores this file entirely (its
+# model comes from an XML block in the pom) and takes the version from <version>, which here is the cosmetic
+# 0.0.0-SNAPSHOT JitPack overrides.
+#
+# THE VERSION ARRIVES AS JRELEASER_PROJECT_VERSION, set by the workflow from the tag that triggered it.
+#
+# NOTHING HERE TOUCHES AN ORDINARY BUILD: no Maven plugin, no lifecycle binding, nothing to download.
+
+project:
+  name: botmaker-session
+  description: Private display sessions for BotMaker.
+  longDescription: |
+    Nested X servers (Xephyr, gamescope), the reaper, the capability model and pointer/keyboard routing —
+    a bot that runs on a display nobody is looking at. Standalone by rule: botmaker-shared is its only
+    BotMaker dependency and it must never depend on the SDK or Studio.
+  authors:
+    - LiQiyeDev
+  license: CC0-1.0
+  copyright: LiQiyeDev
+  inceptionYear: '2026'
+  links:
+    homepage: https://github.com/LiQiyeDev/botmaker-session
+  languages:
+    java:
+      groupId: com.github.LiQiyeDev
+      artifactId: botmaker-session
+      version: '21'
+
+release:
+  github:
+    owner: LiQiyeDev
+    name: botmaker-session
+    tagName: 'v{{projectVersion}}'
+    releaseName: 'v{{projectVersion}}'
+    # release.sh created and pushed the tag, and that push is what started the workflow running this —
+    # so there is nothing left to tag. Keeping the tag on the umbrella's side is deliberate: the tag is
+    # what orders a cross-module release and triggers every downstream CI job, and that ordering is the
+    # one thing JReleaser has no way to express.
+    skipTag: true
+    # A pushed tag cannot be edited and a published release should not be silently replaced.
+    overwrite: false
+    update:
+      enabled: false
+    # The CHANGELOG.md section for exactly this version, written here by the workflow's `notes` step
+    # through tools/changelog-section.sh — the SAME script the umbrella's release.sh calls to gate the
+    # release (check_changelog). One extractor, two readers in two repositories: a release whose notes
+    # come from a different rule than the one that gated it can pass the gate and publish something
+    # else. `external` is taken verbatim, so the changelog stays written by a person — JReleaser carries
+    # it rather than composing one out of commit subjects.
+    changelog:
+      external: target/jreleaser-changelog.md

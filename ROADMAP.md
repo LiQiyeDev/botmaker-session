@@ -16,6 +16,26 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-08-28 — the GitHub Release is published from here, by JReleaser
+
+**Changed:** `jreleaser.yml` (new), `tools/changelog-section.sh` (new), `.github/workflows/ci.yml`.
+
+- A `v*` tag now publishes this module's GitHub Release from its own CI, with the `## [x.y.z]` section of
+  `CHANGELOG.md` as the body — the file the 2026-08-24 entry below added, now carried by something rather
+  than only gated on. It used to be a `gh release create` inside the umbrella's `release.sh`, which keeps
+  everything JReleaser cannot express: which modules are cut, at what versions, in what order, the
+  `.deps.env` pinning shared, and the tag itself.
+- **`tools/changelog-section.sh`** — the extractor, moved out of `release.sh` into this repository so the
+  two readers that must not disagree can both reach it: the umbrella's `check_changelog` gate before
+  anything is tagged, and the workflow for the notes.
+- **Why CI and not the umbrella:** JReleaser cannot open a submodule — `.git` is a `gitdir:` FILE here and
+  its JGit reports *repository not found*, while `--git-root-search` resolves the **umbrella** repo
+  instead. `jreleaser-maven-plugin` is not a way round it: it ignores `jreleaser.yml` and reads the
+  cosmetic `0.0.0-SNAPSHOT` from the pom. The version comes from the tag as `JRELEASER_PROJECT_VERSION`.
+- **The build and the pom are untouched.**
+
+---
+
 ## 2026-08-24 — a released tag stops being a bare ref: `CHANGELOG.md` (phase 5 of 12)
 
 **Changed:** `CHANGELOG.md` (new).

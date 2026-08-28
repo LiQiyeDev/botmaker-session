@@ -91,3 +91,42 @@ jobs:
         with:
           name: surefire-reports
           path: target/surefire-reports/
+
+  # The GitHub Release, published by JReleaser from the tag the umbrella's release.sh pushed.
+  #
+  # It runs HERE and not from the umbrella working copy for a measured reason, recorded in jreleaser.yml:
+  # in a submodule checkout `.git` is a FILE (`gitdir: ../.git/modules/<mod>`) and JReleaser's JGit reports
+  # "repository not found", while --git-root-search gets past it only by resolving the UMBRELLA repository.
+  # A CI checkout is standalone, so neither problem exists. The tag itself stays release.sh's, because tag
+  # ORDER across the eight repositories is the one thing JReleaser has no way to express.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The SAME script release.sh calls to gate this release (check_changelog). One extractor, two readers
+      # in two repositories: a release whose notes come from a different rule than the one that gated it can
+      # pass the gate and then publish something else. A missing section exits non-zero and fails the job,
+      # which is the right outcome — release.sh should already have refused it.
+      - name: Extract the changelog section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p target
+          tools/changelog-section.sh "$version" > target/jreleaser-changelog.md
+          echo "JRELEASER_PROJECT_VERSION=$version" >> "$GITHUB_ENV"
+
+      # The version comes from the tag via JRELEASER_PROJECT_VERSION above, never from the pom: JitPack
+      # serves every tag as com.github.LiQiyeDev:<repo>:<tag> and the pom's <version> is cosmetic.
+      - name: Publish the release
+        uses: jreleaser/release-action@v2
+        with:
+          version: 1.25.0
+          arguments: full-release
+        env:
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
