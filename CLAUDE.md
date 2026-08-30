@@ -43,6 +43,19 @@ is now the only thing keeping a caller out.
 | `…session.process` | `SessionReaper`, `SessionMembers`, `SessionBus`, `AppOutputLog` | plumbing |
 | `…session.input` | `ControllerPointer`, `ControllerKeyboard` | plumbing |
 | `…session.remote` | `DisplayLink` + `RemoteDisplay`/`LocalDisplay`, `DisplayAgent`, `DisplayAgentProcess`, `AgentProtocol`, `WindowIds` | `DisplayLink`/`WindowIds` are API; the rest is plumbing |
+| `…session.launch` | `BackgroundLauncher` | API |
+
+**`session.launch.BackgroundLauncher` arrived from Studio on 2026-08-30** — start a game on a private
+display, adopt one already running, hand off to a bot. It was always written against this module and shared
+and nothing else, and it moved because the Remote Pilot is becoming a plugin's feature and a plugin may not
+name a Studio type. Not to be confused with `shared.launch`, which is the spec and the process work; this is
+the part that needs a session to put them in.
+
+**One line of it did not survive the move, and the rule it broke is worth keeping:** its `report` helper
+wrapped every outcome in `Platform.runLater`, which is a JavaFX call, and **this module has no JavaFX** —
+it is a library a bot links against as readily as an editor does. The callback now arrives on whatever
+thread produced it and **the caller hops**, which is the same rule the plugin contract states for its own
+listeners. Two Studio call sites gained the hop.
 
 Adding JPMS (`module-info.java` exporting only the root package) is the way to make that enforced rather than
 documented. It is deliberately deferred: shared and JNA would become automatic modules named after their jar
