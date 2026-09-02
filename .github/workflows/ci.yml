@@ -34,8 +34,11 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # RETRIED — Maven Central answers 429 to GitHub-hosted runners; see .github/mvn-retry.sh.
       - name: Install botmaker-shared (0.0.0-SNAPSHOT)
-        run: mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
+        run: |
+          source .github/mvn-retry.sh
+          mvn_retry mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
 
       - name: Build
         run: mvn -B -DskipTests package
@@ -67,8 +70,11 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # RETRIED — Maven Central answers 429 to GitHub-hosted runners; see .github/mvn-retry.sh.
       - name: Install botmaker-shared (0.0.0-SNAPSHOT)
-        run: mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
+        run: |
+          source .github/mvn-retry.sh
+          mvn_retry mvn -B -f .deps/botmaker-shared/pom.xml install -DskipTests
 
       - name: Install the nested-display stack
         run: |
