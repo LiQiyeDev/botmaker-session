@@ -9,7 +9,7 @@ date it.
 
 Sections are `## [x.y.z] — YYYY-MM-DD`, newest first.
 
-## [Unreleased]
+## [0.0.10] — 2026-09-02
 
 - **Compiled for Java 25 (LTS).** A consumer needs a 25 runtime; the session stack itself is unchanged.
 
