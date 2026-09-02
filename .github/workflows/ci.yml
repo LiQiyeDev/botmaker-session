@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
 
       # RETRIED — Maven Central answers 429 to GitHub-hosted runners; see .github/mvn-retry.sh.
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
 
       # RETRIED — Maven Central answers 429 to GitHub-hosted runners; see .github/mvn-retry.sh.

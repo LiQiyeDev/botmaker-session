@@ -1,5 +1,5 @@
 jdk:
-  - openjdk21
+  - openjdk25
 install:
   # The committed pom pins botmaker.shared.version=0.0.0-SNAPSHOT (the reactor/dev value). JitPack can't
   # resolve a SNAPSHOT, so the shared tag is injected via -D at build time — the committed pom is never

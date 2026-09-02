@@ -16,6 +16,14 @@ Format: newest first. Each dated entry has a **Done** list and, when relevant, *
 
 ---
 
+## 2026-09-02 — JDK 25 LTS
+
+**Changed:** `jitpack.yml` (`openjdk25`), `pom.xml` (`maven.compiler.release` 25 in place of
+`source`/`target`), `.github/workflows/ci.yml` (`java-version: '25'`). No source changed. Full account in
+`../botmaker-studio-api/ROADMAP.md`, dated the same day.
+
+---
+
 ## 2026-08-28 — the GitHub Release is published from here, by JReleaser
 
 **Changed:** `jreleaser.yml` (new), `tools/changelog-section.sh` (new), `.github/workflows/ci.yml`.

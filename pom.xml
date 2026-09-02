@@ -21,8 +21,7 @@
       A standalone library — it must never depend on botmaker-sdk or botmaker-studio (see CLAUDE.md).
     -->
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!--
           Defaults to the snapshot the reactor (and a local `mvn install`) produces; jitpack.yml injects the
