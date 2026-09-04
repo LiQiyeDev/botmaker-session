@@ -101,11 +101,13 @@
                  the property above and builds with source 5 — "Source option 5 is no longer supported".
                  This module and botmaker-studio-api both stopped building on JitPack on 2026-09-02 for
                  exactly that reason, taking the sdk down with them for two days. Do not remove it because
-                 a local build does not need it; botmaker-studio-api/pom.xml carries the full account. -->
+                 a local build does not need it; botmaker-studio-api/pom.xml carries the full account.
+                 3.11.0 rather than a newer one: 3.12.0 raised the plugin's own Maven prerequisite to
+                 3.6.3, which JitPack's Maven does not meet — v0.0.11 pinned 3.13.0 and failed there. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <version>3.11.0</version>
             </plugin>
 
             <!-- Flatten Plugin: publish a pom whose ${...} are already resolved.

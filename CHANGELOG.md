@@ -9,6 +9,13 @@ date it.
 
 Sections are `## [x.y.z] — YYYY-MM-DD`, newest first.
 
+## [Unreleased]
+
+- **The pin `0.0.11` added was itself unbuildable on JitPack**, so that tag is missing too.
+  `maven-compiler-plugin` raised its own Maven prerequisite to 3.6.3 in 3.12.0 and JitPack's Maven is
+  older, so 3.13.0 failed with `requires Maven version 3.6.3`. Pinned to **3.11.0**, the version
+  `botmaker-shared` has always used. Use `0.0.12`; `0.0.11` was never published.
+
 ## [0.0.11] — 2026-09-04
 
 - **Resolvable from JitPack again.** `v0.0.10` was published and never built: this pom did not pin
