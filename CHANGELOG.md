@@ -9,7 +9,7 @@ date it.
 
 Sections are `## [x.y.z] — YYYY-MM-DD`, newest first.
 
-## [Unreleased]
+## [0.0.12] — 2026-09-04
 
 - **The pin `0.0.11` added was itself unbuildable on JitPack**, so that tag is missing too.
   `maven-compiler-plugin` raised its own Maven prerequisite to 3.6.3 in 3.12.0 and JitPack's Maven is
