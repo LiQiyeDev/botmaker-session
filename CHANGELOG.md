@@ -9,7 +9,7 @@ date it.
 
 Sections are `## [x.y.z] — YYYY-MM-DD`, newest first.
 
-## [Unreleased]
+## [0.0.11] — 2026-09-04
 
 - **Resolvable from JitPack again.** `v0.0.10` was published and never built: this pom did not pin
   `maven-compiler-plugin`, and JitPack's Maven defaults it to **3.1** — a version that predates
