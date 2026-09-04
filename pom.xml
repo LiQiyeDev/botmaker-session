@@ -96,6 +96,18 @@
 
     <build>
         <plugins>
+            <!-- PIN THE COMPILER. Redundant locally, load-bearing on JitPack: its Maven defaults
+                 maven-compiler-plugin to 3.1, which predates maven.compiler.release (3.6) and so ignores
+                 the property above and builds with source 5 — "Source option 5 is no longer supported".
+                 This module and botmaker-studio-api both stopped building on JitPack on 2026-09-02 for
+                 exactly that reason, taking the sdk down with them for two days. Do not remove it because
+                 a local build does not need it; botmaker-studio-api/pom.xml carries the full account. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
             <!-- Flatten Plugin: publish a pom whose ${...} are already resolved.
 
                  Without it, `mvn install -Dbotmaker.shared.version=v0.0.18` (what jitpack.yml runs) affects

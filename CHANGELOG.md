@@ -9,6 +9,20 @@ date it.
 
 Sections are `## [x.y.z] — YYYY-MM-DD`, newest first.
 
+## [Unreleased]
+
+- **Resolvable from JitPack again.** `v0.0.10` was published and never built: this pom did not pin
+  `maven-compiler-plugin`, and JitPack's Maven defaults it to **3.1** — a version that predates
+  `maven.compiler.release` (3.6), ignores it and falls back to `source 5`:
+
+  ```
+  [ERROR] Source option 5 is no longer supported. Use 8 or later.
+  ```
+
+  It broke on 2026-09-02, with the move to Java 25, and took the SDK with it: a bot resolving
+  `botmaker-sdk` got `Could not find artifact com.github.LiQiyeDev:botmaker-session`. The session stack
+  itself is unchanged — this tag publishes what `v0.0.10` was meant to.
+
 ## [0.0.10] — 2026-09-02
 
 - **Compiled for Java 25 (LTS).** A consumer needs a 25 runtime; the session stack itself is unchanged.
